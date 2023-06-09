@@ -21,10 +21,13 @@ import (
 	"github.com/lxc/lxd/lxd/project"
 	"github.com/lxc/lxd/lxd/rbac"
 	"github.com/lxc/lxd/lxd/response"
+	"github.com/lxc/lxd/lxd/scriptlet"
 	"github.com/lxc/lxd/lxd/state"
 	storagePools "github.com/lxc/lxd/lxd/storage"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
+	apiScriptlet "github.com/lxc/lxd/shared/api/scriptlet"
+	"github.com/lxc/lxd/shared/logger"
 	"github.com/lxc/lxd/shared/version"
 )
 
@@ -87,84 +90,71 @@ func instancePost(d *Daemon, r *http.Request) response.Response {
 		return response.BadRequest(fmt.Errorf("Invalid instance name"))
 	}
 
-	targetNode := queryParam(r, "target")
-
 	// Flag indicating whether the node running the container is offline.
 	sourceNodeOffline := false
 
-	// Flag indicating whether the node the container should be moved to is
-	// online (only relevant if "?target=<node>" was given).
-	targetNodeOffline := false
+	// Check if clustered.
+	clustered, err := cluster.Enabled(s.DB.Node)
+	if err != nil {
+		return response.InternalError(fmt.Errorf("Failed checking cluster state: %w", err))
+	}
+
+	var inst instance.Instance
+	var targetProject *api.Project
+	var targetMemberInfo *db.NodeInfo
+	var candidateMembers []db.NodeInfo
+
+	// Load requested instance
+	inst, err = instance.LoadByProjectAndName(s, projectName, name)
+	if err != nil {
+		return response.SmartError(err)
+	}
+
+	target := queryParam(r, "target")
+	if !clustered && target != "" {
+		return response.BadRequest(fmt.Errorf("Target only allowed when clustered"))
+	}
 
 	// A POST to /containers/<name>?target=<node> is meant to be used to
 	// move a container from one node to another within a cluster.
-	if targetNode != "" {
-		// Determine if either the source node (the one currently
-		// running the container) or the target node are offline.
-		//
-		// If the target node is offline, we return an error.
-		//
-		// If the source node is offline and the container is backed by
-		// ceph, we'll just assume that the container is not running
-		// and it's safe to move it.
-		//
-		// TODO: add some sort of "force" flag to the API, to signal
-		//       that the user really wants to move the container even
-		//       if we can't know for sure that it's indeed not
-		//       running?
-		err := s.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
-			p, err := dbCluster.GetProject(ctx, tx.Tx(), projectName)
-			if err != nil {
-				return fmt.Errorf("Failed loading project: %w", err)
-			}
-
-			apiProject, err := p.ToAPI(ctx, tx.Tx())
-			if err != nil {
-				return err
-			}
-
-			// Check if user is allowed to use cluster member targeting
-			err = project.CheckClusterTargetRestriction(r, apiProject, targetNode)
-			if err != nil {
-				return err
-			}
-
-			// Load target node.
-			node, err := tx.GetNodeByName(ctx, targetNode)
-			if err != nil {
-				return fmt.Errorf("Failed to get target node: %w", err)
-			}
-
-			targetNodeOffline = node.IsOffline(s.GlobalConfig.OfflineThreshold())
-
-			// Load source node.
-			address, err := tx.GetNodeAddressOfInstance(ctx, projectName, name, instanceType)
-			if err != nil {
-				return fmt.Errorf("Failed to get address of instance's member: %w", err)
-			}
-
-			if address == "" {
-				// Local node.
-				sourceNodeOffline = false
-				return nil
-			}
-
-			node, err = tx.GetNodeByAddress(ctx, address)
-			if err != nil {
-				return fmt.Errorf("Failed to get source member for %s: %w", address, err)
-			}
-
-			sourceNodeOffline = node.IsOffline(s.GlobalConfig.OfflineThreshold())
-
-			return nil
-		})
+	//
+	// Determine if either the source node (the one currently
+	// running the container) or the target node are offline.
+	//
+	// If the target node is offline, we return an error.
+	//
+	// If the source node is offline and the container is backed by
+	// ceph, we'll just assume that the container is not running
+	// and it's safe to move it.
+	//
+	// TODO: add some sort of "force" flag to the API, to signal
+	//       that the user really wants to move the container even
+	//       if we can't know for sure that it's indeed not
+	//       running?
+	err = s.DB.Cluster.Transaction(r.Context(), func(ctx context.Context, tx *db.ClusterTx) error {
+		// Load source node.
+		sourceAddress, err := tx.GetNodeAddressOfInstance(ctx, projectName, name, instanceType)
 		if err != nil {
-			return response.SmartError(err)
+			return fmt.Errorf("Failed to get address of instance's member: %w", err)
 		}
-	}
 
-	if targetNode != "" && targetNodeOffline {
-		return response.BadRequest(fmt.Errorf("Target node is offline"))
+		if sourceAddress == "" {
+			// Local node.
+			sourceNodeOffline = false
+			return nil
+		}
+
+		sourceMemberInfo, err := tx.GetNodeByAddress(ctx, sourceAddress)
+		if err != nil {
+			return fmt.Errorf("Failed to get source member for %s: %w", sourceAddress, err)
+		}
+
+		sourceNodeOffline = sourceMemberInfo.IsOffline(s.GlobalConfig.OfflineThreshold())
+
+		return nil
+	})
+	if err != nil {
+		return response.SmartError(err)
 	}
 
 	// Check whether to forward the request to the node that is running the
@@ -188,7 +178,7 @@ func instancePost(d *Daemon, r *http.Request) response.Response {
 	//
 	// Cases 1. and 2. are the ones for which the conditional will be true
 	// and we'll either forward the request or load the container.
-	if targetNode == "" || !sourceNodeOffline {
+	if target == "" || !sourceNodeOffline {
 		// Handle requests targeted to a container on a different node.
 		resp, err := forwardedResponseIfInstanceIsRemote(s, r, projectName, name, instanceType)
 		if err != nil {
@@ -203,6 +193,112 @@ func instancePost(d *Daemon, r *http.Request) response.Response {
 		resp := forwardedResponseIfTargetIsRemote(s, r)
 		if resp != nil {
 			return resp
+		}
+	}
+
+	// Run the cluster placement after potentially forwarding the request to another member.
+	if target != "" && clustered {
+		_, targetGroup := shared.TargetDetect(target)
+
+		if targetGroup != "" {
+			err = s.DB.Cluster.Transaction(r.Context(), func(ctx context.Context, tx *db.ClusterTx) error {
+				group, err := dbCluster.GetClusterGroup(ctx, tx.Tx(), targetGroup)
+				if err != nil {
+					return err
+				}
+
+				groups, err := dbCluster.GetNodeClusterGroups(ctx, tx.Tx(), dbCluster.NodeClusterGroupFilter{GroupID: &group.ID})
+				if err != nil {
+					return err
+				}
+
+				for _, group := range groups {
+					if group.Node == inst.Location() {
+						return api.StatusErrorf(http.StatusBadRequest, "Instance is already in group: %s", targetGroup)
+					}
+				}
+
+				return nil
+			})
+			if err != nil {
+				return response.SmartError(err)
+			}
+		}
+
+		err = s.DB.Cluster.Transaction(r.Context(), func(ctx context.Context, tx *db.ClusterTx) error {
+			p, err := dbCluster.GetProject(ctx, tx.Tx(), projectName)
+			if err != nil {
+				return err
+			}
+
+			targetProject, err = p.ToAPI(ctx, tx.Tx())
+			if err != nil {
+				return err
+			}
+
+			targetMemberInfo, err = project.CheckTarget(r, tx, targetProject, target)
+			if err != nil {
+				return err
+			}
+
+			if targetMemberInfo == nil {
+				allMembers, err := tx.GetNodes(ctx)
+				if err != nil {
+					return fmt.Errorf("Failed getting cluster members: %w", err)
+				}
+
+				clusterGroupsAllowed := project.GetRestrictedClusterGroups(targetProject)
+
+				candidateMembers, err = tx.GetCandidateMembers(ctx, allMembers, []int{inst.Architecture()}, targetGroup, clusterGroupsAllowed, s.GlobalConfig.OfflineThreshold())
+				if err != nil {
+					return err
+				}
+			}
+
+			return nil
+		})
+		if err != nil {
+			return response.SmartError(err)
+		}
+
+		if targetMemberInfo == nil {
+			if s.GlobalConfig.InstancesPlacementScriptlet() != "" {
+				leaderAddress, err := d.gateway.LeaderAddress()
+				if err != nil {
+					return response.InternalError(err)
+				}
+
+				// Craft the request.
+				req := apiScriptlet.InstancePlacement{
+					InstancesPost: api.InstancesPost{
+						Name: name,
+						Type: api.InstanceType(instanceType.String()),
+						InstancePut: api.InstancePut{
+							Config:  inst.ExpandedConfig(),
+							Devices: inst.ExpandedDevices().CloneNative(),
+						},
+					},
+					Project: projectName,
+					Reason:  apiScriptlet.InstancePlacementReasonRelocation,
+				}
+
+				targetMemberInfo, err = scriptlet.InstancePlacementRun(r.Context(), logger.Log, s, &req, candidateMembers, leaderAddress)
+				if err != nil {
+					return response.BadRequest(fmt.Errorf("Failed instance placement scriptlet: %w", err))
+				}
+			}
+		}
+
+		// If no target member was selected yet, pick the member with the least number of instances.
+		if targetMemberInfo == nil {
+			targetMemberInfo, err = getNodeWithLeastInstances(r.Context(), s, candidateMembers)
+			if err != nil {
+				return response.SmartError(err)
+			}
+		}
+
+		if targetMemberInfo.IsOffline(s.GlobalConfig.OfflineThreshold()) {
+			return response.BadRequest(fmt.Errorf("Target node is offline"))
 		}
 	}
 
@@ -230,11 +326,6 @@ func instancePost(d *Daemon, r *http.Request) response.Response {
 	_, err = reqRaw.GetBool("live")
 	if err != nil {
 		req.Live = true
-	}
-
-	inst, err := instance.LoadByProjectAndName(s, projectName, name)
-	if err != nil {
-		return response.SmartError(err)
 	}
 
 	// If new instance name not supplied, assume it will be keeping its current name.
@@ -288,7 +379,7 @@ func instancePost(d *Daemon, r *http.Request) response.Response {
 			return operations.OperationResponse(op)
 		}
 
-		if targetNode != "" {
+		if target != "" {
 			// Check if instance has backups.
 			backups, err := s.DB.Cluster.GetInstanceBackups(projectName, name)
 			if err != nil {
@@ -301,7 +392,7 @@ func instancePost(d *Daemon, r *http.Request) response.Response {
 			}
 
 			run := func(op *operations.Operation) error {
-				return migrateInstance(s, r, inst, targetNode, req, op)
+				return migrateInstance(s, r, inst, targetMemberInfo.Name, req, op)
 			}
 
 			resources := map[string][]api.URL{}

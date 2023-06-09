@@ -853,7 +853,6 @@ func instancesPost(d *Daemon, r *http.Request) response.Response {
 	var sourceInst *dbCluster.Instance
 	var sourceImage *api.Image
 	var sourceImageRef string
-	var clusterGroupsAllowed []string
 	var candidateMembers []db.NodeInfo
 	var targetMemberInfo *db.NodeInfo
 
@@ -863,12 +862,7 @@ func instancesPost(d *Daemon, r *http.Request) response.Response {
 			return api.StatusErrorf(http.StatusBadRequest, "Target only allowed when clustered")
 		}
 
-		var targetMember, targetGroup string
-		if strings.HasPrefix(target, "@") {
-			targetGroup = strings.TrimPrefix(target, "@")
-		} else {
-			targetMember = target
-		}
+		_, targetGroup := shared.TargetDetect(queryParam(r, "target"))
 
 		dbProject, err := dbCluster.GetProject(ctx, tx.Tx(), targetProjectName)
 		if err != nil {
@@ -880,64 +874,10 @@ func instancesPost(d *Daemon, r *http.Request) response.Response {
 			return err
 		}
 
-		var allMembers []db.NodeInfo
-
 		if clustered && !clusterNotification {
-			clusterGroupsAllowed = shared.SplitNTrimSpace(targetProject.Config["restricted.cluster.groups"], ",", -1, true)
-
-			// Check manual cluster member targeting restrictions.
-			err = project.CheckClusterTargetRestriction(r, targetProject, target)
+			targetMemberInfo, err = project.CheckTarget(r, tx, targetProject, target)
 			if err != nil {
 				return err
-			}
-
-			allMembers, err = tx.GetNodes(ctx)
-			if err != nil {
-				return fmt.Errorf("Failed getting cluster members: %w", err)
-			}
-
-			if targetMember != "" {
-				// Find target member.
-				for i := range allMembers {
-					if allMembers[i].Name == targetMember {
-						targetMemberInfo = &allMembers[i]
-						break
-					}
-				}
-
-				if targetMemberInfo == nil {
-					return api.StatusErrorf(http.StatusNotFound, "Cluster member not found")
-				}
-
-				// If restricted groups are specified then check member is in at least one of them.
-				if shared.IsTrue(targetProject.Config["restricted"]) && len(clusterGroupsAllowed) > 0 {
-					found := false
-					for _, memberGroupName := range targetMemberInfo.Groups {
-						if shared.StringInSlice(memberGroupName, clusterGroupsAllowed) {
-							found = true
-							break
-						}
-					}
-
-					if !found {
-						return api.StatusErrorf(http.StatusForbidden, "Project isn't allowed to use this cluster member")
-					}
-				}
-			} else if targetGroup != "" {
-				// If restricted groups are specified then check the requested group is in the list.
-				if shared.IsTrue(targetProject.Config["restricted"]) && len(clusterGroupsAllowed) > 0 && !shared.StringInSlice(targetGroup, clusterGroupsAllowed) {
-					return api.StatusErrorf(http.StatusForbidden, "Project isn't allowed to use this cluster group")
-				}
-
-				// Check if the target group exists.
-				targetGroupExists, err := dbCluster.ClusterGroupExists(ctx, tx.Tx(), targetGroup)
-				if err != nil {
-					return err
-				}
-
-				if !targetGroupExists {
-					return api.StatusErrorf(http.StatusBadRequest, "Cluster group %q doesn't exist", targetGroup)
-				}
 			}
 		}
 
@@ -1083,6 +1023,13 @@ func instancesPost(d *Daemon, r *http.Request) response.Response {
 				}
 			}
 
+			allMembers, err := tx.GetNodes(ctx)
+			if err != nil {
+				return fmt.Errorf("Failed getting cluster members: %w", err)
+			}
+
+			clusterGroupsAllowed := project.GetRestrictedClusterGroups(targetProject)
+
 			candidateMembers, err = tx.GetCandidateMembers(ctx, allMembers, architectures, targetGroup, clusterGroupsAllowed, s.GlobalConfig.OfflineThreshold())
 			if err != nil {
 				return err
@@ -1137,18 +1084,7 @@ func instancesPost(d *Daemon, r *http.Request) response.Response {
 
 		// If no target member was selected yet, pick the member with the least number of instances.
 		if targetMemberInfo == nil {
-			err = s.DB.Cluster.Transaction(r.Context(), func(ctx context.Context, tx *db.ClusterTx) error {
-				targetMemberInfo, err = tx.GetNodeWithLeastInstances(ctx, candidateMembers)
-				if err != nil {
-					return err
-				}
-
-				if targetMemberInfo == nil {
-					return api.StatusErrorf(http.StatusBadRequest, "No suitable cluster member could be found")
-				}
-
-				return nil
-			})
+			targetMemberInfo, err = getNodeWithLeastInstances(r.Context(), s, candidateMembers)
 			if err != nil {
 				return response.SmartError(err)
 			}

@@ -730,3 +730,27 @@ func getSourceImageFromInstanceSource(ctx context.Context, s *state.State, tx *d
 
 	return sourceImage, nil
 }
+
+// getNodeWithLeastInstances returns the node with the least amount of instances out of the given candidates.
+func getNodeWithLeastInstances(ctx context.Context, s *state.State, candidateMembers []db.NodeInfo) (*db.NodeInfo, error) {
+	var err error
+	var targetMemberInfo *db.NodeInfo
+
+	err = s.DB.Cluster.Transaction(ctx, func(ctx context.Context, tx *db.ClusterTx) error {
+		targetMemberInfo, err = tx.GetNodeWithLeastInstances(ctx, candidateMembers)
+		if err != nil {
+			return err
+		}
+
+		if targetMemberInfo == nil {
+			return api.StatusErrorf(http.StatusBadRequest, "No suitable cluster member could be found")
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return targetMemberInfo, nil
+}
