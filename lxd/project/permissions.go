@@ -1514,3 +1514,115 @@ func AllowSnapshotCreation(p *api.Project) error {
 
 	return nil
 }
+
+// GetRestrictedClusterGroups returns a slice of restricted cluster groups for the given project.
+func GetRestrictedClusterGroups(p *api.Project) []string {
+	return shared.SplitNTrimSpace(p.Config["restricted.cluster.groups"], ",", -1, true)
+}
+
+// AllowClusterMember returns nil if the given project is allowed to use the cluster member.
+func AllowClusterMember(p *api.Project, member *db.NodeInfo) error {
+	clusterGroupsAllowed := GetRestrictedClusterGroups(p)
+
+	if shared.IsTrue(p.Config["restricted"]) && len(clusterGroupsAllowed) > 0 {
+		found := false
+		for _, memberGroupName := range member.Groups {
+			if shared.StringInSlice(memberGroupName, clusterGroupsAllowed) {
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			return fmt.Errorf("Project isn't allowed to use this cluster member")
+		}
+	}
+
+	return nil
+}
+
+// AllowClusterGroup returns nil if the given project is allowed to use the cluster group.
+func AllowClusterGroup(p *api.Project, group string) error {
+	clusterGroupsAllowed := GetRestrictedClusterGroups(p)
+
+	// Skip the check if the project is not restricted
+	if shared.IsFalseOrEmpty(p.Config["restricted"]) {
+		return nil
+	}
+
+	if len(clusterGroupsAllowed) > 0 && !shared.StringInSlice(group, clusterGroupsAllowed) {
+		return fmt.Errorf("Project isn't allowed to use this cluster group")
+	}
+
+	return nil
+}
+
+// CheckTargetMember checks if the given member is allowed for the project.
+// If nil it also returns the resolved target member node information.
+func CheckTargetMember(tx *db.ClusterTx, p *api.Project, targetMember string) (*db.NodeInfo, error) {
+	ctx := context.Background()
+
+	// Find target member.
+	member, err := tx.GetNodeByName(ctx, targetMember)
+	if err != nil {
+		return nil, api.StatusErrorf(http.StatusNotFound, "Cluster member not found")
+	}
+
+	// If restricted groups are specified then check member is in at least one of them.
+	err = AllowClusterMember(p, &member)
+	if err != nil {
+		return nil, api.StatusErrorf(http.StatusForbidden, err.Error())
+	}
+
+	return &member, nil
+}
+
+// CheckTargetGroup checks if the given group is allowed for the project.
+func CheckTargetGroup(tx *db.ClusterTx, p *api.Project, targetGroup string) error {
+	ctx := context.Background()
+
+	// If restricted groups are specified then check the requested group is in the list.
+	err := AllowClusterGroup(p, targetGroup)
+	if err != nil {
+		return api.StatusErrorf(http.StatusForbidden, err.Error())
+	}
+
+	// Check if the target group exists.
+	targetGroupExists, err := cluster.ClusterGroupExists(ctx, tx.Tx(), targetGroup)
+	if err != nil {
+		return err
+	}
+
+	if !targetGroupExists {
+		return api.StatusErrorf(http.StatusBadRequest, "Cluster group %q doesn't exist", targetGroup)
+	}
+
+	return nil
+}
+
+// CheckTarget checks if the given cluster target (member or group) is allowed.
+// If nil it also returns the resolved target member node information.
+func CheckTarget(r *http.Request, tx *db.ClusterTx, p *api.Project, target string) (*db.NodeInfo, error) {
+	var targetMemberInfo *db.NodeInfo
+	targetMember, targetGroup := shared.TargetDetect(target)
+
+	// Check manual cluster member targeting restrictions.
+	err := CheckClusterTargetRestriction(r, p, target)
+	if err != nil {
+		return nil, err
+	}
+
+	if targetMember != "" {
+		targetMemberInfo, err = CheckTargetMember(tx, p, targetMember)
+		if err != nil {
+			return nil, err
+		}
+	} else if targetGroup != "" {
+		err := CheckTargetGroup(tx, p, targetGroup)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return targetMemberInfo, nil
+}
