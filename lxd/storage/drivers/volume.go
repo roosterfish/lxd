@@ -416,7 +416,11 @@ func (v Volume) NewVMBlockFilesystemVolume() Volume {
 		newConf["size"] = v.config["size.state"]
 	} else {
 		// Fallback to the default VM filesystem size.
-		newConf["size"] = deviceConfig.DefaultVMBlockFilesystemSize
+		if v.driver.Info().Name == "powerflex" {
+			newConf["size"] = deviceConfig.DefaultVMPowerFlexBlockFilesystemSize
+		} else {
+			newConf["size"] = deviceConfig.DefaultVMBlockFilesystemSize
+		}
 	}
 
 	vol := NewVolume(v.driver, v.pool, v.volType, ContentTypeFS, v.name, newConf, v.poolConfig)
