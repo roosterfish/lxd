@@ -133,10 +133,12 @@ type powerFlexSDC struct {
 
 // powerFlexVolume represents a volume in PowerFlex.
 type powerFlexVolume struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	VolumeType    string `json:"volumeType"`
-	MappedSDCInfo []struct {
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	VolumeType       string `json:"volumeType"`
+	VTreeID          string `json:"vtreeId"`
+	AncestorVolumeID string `json:"ancestorVolumeId"`
+	MappedSDCInfo    []struct {
 		SDCID    string `json:"sdcId"`
 		SDCName  string `json:"sdcName"`
 		NQN      string `json:"nqn"`
@@ -517,6 +519,29 @@ func (p *powerFlexClient) createVolumeSnapshot(systemID string, volumeID string,
 	}
 
 	return actualResponse.VolumeIDs[0], nil
+}
+
+// getVolumeSnapshots returns the snapshots of the volume behind volumeID.
+func (p *powerFlexClient) getVolumeSnapshots(volumeID string) ([]powerFlexVolume, error) {
+	volume, err := p.getVolume(volumeID)
+	if err != nil {
+		return nil, err
+	}
+
+	var actualResponse []powerFlexVolume
+	err = p.requestAuthenticated(http.MethodGet, fmt.Sprintf("/api/instances/VTree::%s/relationships/Volume", volume.VTreeID), nil, &actualResponse)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to get volume snapshots: %q: %w", volumeID, err)
+	}
+
+	var filteredVolumes []powerFlexVolume
+	for _, volume := range actualResponse {
+		if volume.AncestorVolumeID == volumeID {
+			filteredVolumes = append(filteredVolumes, volume)
+		}
+	}
+
+	return filteredVolumes, nil
 }
 
 // deleteVolume deletes the volume behind volumeID.
