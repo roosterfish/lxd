@@ -260,7 +260,7 @@ func (d *powerflex) CreateVolumeFromMigration(vol Volume, conn io.ReadWriteClose
 
 // RefreshVolume updates an existing volume to match the state of another.
 func (d *powerflex) RefreshVolume(vol Volume, srcVol Volume, srcSnapshots []Volume, allowInconsistent bool, op *operations.Operation) error {
-	return ErrNotSupported
+	return genericVFSCopyVolume(d, nil, vol, srcVol, srcSnapshots, true, allowInconsistent, op)
 }
 
 // DeleteVolume deletes a volume of the storage device.
