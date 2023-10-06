@@ -145,7 +145,7 @@ func (d *powerflex) CreateVolume(vol Volume, filler *VolumeFiller, op *operation
 
 // CreateVolumeFromBackup re-creates a volume from its exported state.
 func (d *powerflex) CreateVolumeFromBackup(vol Volume, srcBackup backup.Info, srcData io.ReadSeeker, op *operations.Operation) (VolumePostHook, revert.Hook, error) {
-	return nil, nil, ErrNotSupported
+	return genericVFSBackupUnpack(d, d.state.OS, vol, srcBackup.Snapshots, srcData, op)
 }
 
 // CreateVolumeFromCopy provides same-pool volume copying functionality.
@@ -749,7 +749,7 @@ func (d *powerflex) MigrateVolume(vol Volume, conn io.ReadWriteCloser, volSrcArg
 
 // BackupVolume creates an exported version of a volume.
 func (d *powerflex) BackupVolume(vol Volume, tarWriter *instancewriter.InstanceTarWriter, optimized bool, snapshots []string, op *operations.Operation) error {
-	return ErrNotSupported
+	return genericVFSBackupVolume(d, vol, tarWriter, snapshots, op)
 }
 
 // CreateVolumeSnapshot creates a snapshot of a volume.
@@ -870,17 +870,41 @@ func (d *powerflex) DeleteVolumeSnapshot(snapVol Volume, op *operations.Operatio
 
 // MountVolumeSnapshot simulates mounting a volume snapshot.
 func (d *powerflex) MountVolumeSnapshot(snapVol Volume, op *operations.Operation) error {
-	return ErrNotSupported
+	// A snapshot in PowerFlex is just another volume.
+	// We can reuse the volume mounting procedures.
+	return d.MountVolume(snapVol, op)
 }
 
 // UnmountVolume simulates unmounting a volume snapshot.
 func (d *powerflex) UnmountVolumeSnapshot(snapVol Volume, op *operations.Operation) (bool, error) {
-	return false, ErrNotSupported
+	// A snapshot in PowerFlex is just another volume.
+	// We can reuse the volume mounting procedures.
+	return d.UnmountVolume(snapVol, false, op)
 }
 
 // VolumeSnapshots returns a list of snapshots for the volume (in no particular order).
 func (d *powerflex) VolumeSnapshots(vol Volume, op *operations.Operation) ([]string, error) {
-	return nil, ErrNotSupported
+	client := d.client()
+	volumeID, err := client.getVolumeID(d.getVolumeName(vol))
+	if err != nil {
+		return nil, err
+	}
+
+	volumeSnapshots, err := client.getVolumeSnapshots(volumeID)
+	if err != nil {
+		return nil, err
+	}
+
+	var snapshotNames []string
+	for _, snapshot := range volumeSnapshots {
+		// Filter out LXD snapshots which contain the @.
+		splittedName := strings.Split(snapshot.Name, "@")
+		if len(splittedName) == 2 {
+			snapshotNames = append(snapshotNames, splittedName[1])
+		}
+	}
+
+	return snapshotNames, nil
 }
 
 // RestoreVolume restores a volume from a snapshot.
