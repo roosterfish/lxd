@@ -479,6 +479,23 @@ func (p *powerFlexClient) setVolumeSize(volumeID string, sizeGiB int64) error {
 	return nil
 }
 
+// overwriteVolume overwrites the volumes contents behind volumeID with the given snapshot.
+func (p *powerFlexClient) overwriteVolume(volumeID string, snapshotID string) error {
+	body, err := p.createBodyReader(map[string]any{
+		"srcVolumeId": snapshotID,
+	})
+	if err != nil {
+		return err
+	}
+
+	err = p.requestAuthenticated(http.MethodPost, fmt.Sprintf("/api/instances/Volume::%s/action/overwriteVolumeContent", volumeID), body, nil)
+	if err != nil {
+		return fmt.Errorf("Failed to overwrite volume: %q: %w", volumeID, err)
+	}
+
+	return nil
+}
+
 // createVolumeSnapshot creates a new volume snapshot under the given systemID for the volume behind volumeID.
 // The accessMode can be either ReadWrite or ReadOnly.
 // The returned string represents the ID of the snapshot.
