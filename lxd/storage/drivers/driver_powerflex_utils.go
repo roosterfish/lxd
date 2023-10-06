@@ -477,6 +477,48 @@ func (p *powerFlexClient) setVolumeSize(volumeID string, sizeGiB int64) error {
 	return nil
 }
 
+// createVolumeSnapshot creates a new volume snapshot under the given systemID for the volume behind volumeID.
+// The accessMode can be either ReadWrite or ReadOnly.
+// The returned string represents the ID of the snapshot.
+func (p *powerFlexClient) createVolumeSnapshot(systemID string, volumeID string, snapshotName string, accessMode powerFlexSnapshotMode) (string, error) {
+	body, err := p.createBodyReader(map[string]any{
+		"snapshotDefs": []map[string]string{
+			{
+				"volumeId":     volumeID,
+				"snapshotName": snapshotName,
+			},
+		},
+		"accessModeLimit": accessMode,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	var actualResponse struct {
+		VolumeIDs []string `json:"volumeIdList"`
+	}
+
+	err = p.requestAuthenticated(http.MethodPost, fmt.Sprintf("/api/instances/System::%s/action/snapshotVolumes", systemID), body, &actualResponse)
+	if err != nil {
+		powerFlexError, ok := err.(*powerFlexError)
+		if ok {
+			// API returns 500 if the snapshot name is too long.
+			// To not confuse it with other 500 that might occur check the error code too.
+			if powerFlexError.HTTPStatusCode() == http.StatusInternalServerError && powerFlexError.ErrorCode() == powerFlexCodeNameTooLong {
+				return "", api.StatusErrorf(http.StatusNotFound, "Snapshot name exceeds the allowed length of 31 characters: %q", snapshotName)
+			}
+		}
+
+		return "", fmt.Errorf("Failed to create volume snapshot: %q: %w", snapshotName, err)
+	}
+
+	if len(actualResponse.VolumeIDs) == 0 {
+		return "", fmt.Errorf("Response does not contain a single snapshot ID")
+	}
+
+	return actualResponse.VolumeIDs[0], nil
+}
+
 // deleteVolume deletes the volume behind volumeID.
 // The deleteMode can be one of ONLY_ME, INCLUDING_DESCENDANTS, DESCENDANTS_ONLY or WHOLE_VTREE.
 // It describes the impact when deleting a volume from the underlying VTree. ONLY_ME deletes the
