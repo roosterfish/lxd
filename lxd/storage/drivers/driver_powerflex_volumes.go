@@ -909,7 +909,28 @@ func (d *powerflex) VolumeSnapshots(vol Volume, op *operations.Operation) ([]str
 
 // RestoreVolume restores a volume from a snapshot.
 func (d *powerflex) RestoreVolume(vol Volume, snapshotName string, op *operations.Operation) error {
-	return ErrNotSupported
+	ourUnmount, err := d.UnmountVolume(vol, false, op)
+	if err != nil {
+		return err
+	}
+
+	if ourUnmount {
+		defer func() { _ = d.MountVolume(vol, op) }()
+	}
+
+	client := d.client()
+	volumeID, err := client.getVolumeID(d.getVolumeName(vol))
+	if err != nil {
+		return err
+	}
+
+	snapVol := NewVolume(d, d.name, vol.volType, vol.contentType, fmt.Sprintf("%s/%s", vol.Name(), snapshotName), nil, nil)
+	snapshotID, err := client.getVolumeID(d.getVolumeName(snapVol))
+	if err != nil {
+		return err
+	}
+
+	return client.overwriteVolume(volumeID, snapshotID)
 }
 
 // RenameVolumeSnapshot renames a volume snapshot.
