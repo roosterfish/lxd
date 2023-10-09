@@ -248,7 +248,7 @@ func (d *powerflex) CreateVolumeFromCopy(vol Volume, srcVol Volume, copySnapshot
 
 // CreateVolumeFromMigration creates a volume being sent via a migration.
 func (d *powerflex) CreateVolumeFromMigration(vol Volume, conn io.ReadWriteCloser, volTargetArgs migration.VolumeTargetArgs, preFiller *VolumeFiller, op *operations.Operation) error {
-	return ErrNotSupported
+	return genericVFSCreateVolumeFromMigration(d, nil, vol, conn, volTargetArgs, preFiller, op)
 }
 
 // RefreshVolume updates an existing volume to match the state of another.
@@ -719,7 +719,7 @@ func (d *powerflex) RenameVolume(vol Volume, newVolName string, op *operations.O
 
 // MigrateVolume sends a volume for migration.
 func (d *powerflex) MigrateVolume(vol Volume, conn io.ReadWriteCloser, volSrcArgs *migration.VolumeSourceArgs, op *operations.Operation) error {
-	return ErrNotSupported
+	return genericVFSMigrateVolume(d, d.state, vol, conn, volSrcArgs, op)
 }
 
 // BackupVolume creates an exported version of a volume.
