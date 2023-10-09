@@ -443,6 +443,20 @@ func (d *powerflex) UpdateVolume(vol Volume, changedConfig map[string]string) er
 
 // GetVolumeUsage returns the disk space used by the volume.
 func (d *powerflex) GetVolumeUsage(vol Volume) (int64, error) {
+	// If mounted, use the filesystem stats for pretty accurate usage information.
+	if vol.contentType == ContentTypeFS && filesystem.IsMountPoint(vol.MountPath()) {
+		var stat unix.Statfs_t
+
+		err := unix.Statfs(vol.MountPath(), &stat)
+		if err != nil {
+			return -1, err
+		}
+
+		return int64(stat.Blocks-stat.Bfree) * int64(stat.Bsize), nil
+	}
+
+	// Getting the usage of an unmounted volume is not supported.
+	// PowerFlex reports the usage on pool level only.
 	return 0, ErrNotSupported
 }
 
