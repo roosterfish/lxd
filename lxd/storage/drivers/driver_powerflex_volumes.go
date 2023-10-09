@@ -255,7 +255,25 @@ func (d *powerflex) CreateVolumeFromCopy(vol Volume, srcVol Volume, copySnapshot
 
 // CreateVolumeFromMigration creates a volume being sent via a migration.
 func (d *powerflex) CreateVolumeFromMigration(vol Volume, conn io.ReadWriteCloser, volTargetArgs migration.VolumeTargetArgs, preFiller *VolumeFiller, op *operations.Operation) error {
-	return ErrNotSupported
+	// When performing a cluster member move prepare the volumes on the target side.
+	if volTargetArgs.ClusterMoveSourceName != "" {
+		err := vol.EnsureMountPath()
+		if err != nil {
+			return err
+		}
+
+		if vol.IsVMBlock() {
+			fsVol := vol.NewVMBlockFilesystemVolume()
+			err := d.CreateVolumeFromMigration(fsVol, conn, volTargetArgs, preFiller, op)
+			if err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}
+
+	return genericVFSCreateVolumeFromMigration(d, nil, vol, conn, volTargetArgs, preFiller, op)
 }
 
 // RefreshVolume updates an existing volume to match the state of another.
@@ -782,7 +800,12 @@ func (d *powerflex) RenameVolume(vol Volume, newVolName string, op *operations.O
 
 // MigrateVolume sends a volume for migration.
 func (d *powerflex) MigrateVolume(vol Volume, conn io.ReadWriteCloser, volSrcArgs *migration.VolumeSourceArgs, op *operations.Operation) error {
-	return ErrNotSupported
+	// When performing a cluster member move don't do anything on the source member.
+	if volSrcArgs.ClusterMove {
+		return nil
+	}
+
+	return genericVFSMigrateVolume(d, d.state, vol, conn, volSrcArgs, op)
 }
 
 // BackupVolume creates an exported version of a volume.
