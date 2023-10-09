@@ -30,6 +30,7 @@ import (
 	"github.com/canonical/lxd/lxd/seccomp"
 	"github.com/canonical/lxd/lxd/state"
 	"github.com/canonical/lxd/lxd/sys"
+	"github.com/canonical/lxd/lxd/util"
 	"github.com/canonical/lxd/shared"
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/lxd/shared/idmap"
@@ -1049,9 +1050,14 @@ func NextSnapshotName(s *state.State, inst Instance, defaultPattern string) (str
 	return pattern, nil
 }
 
-// temporaryName concatenates the move prefix and instUUID for a temporary instance.
-func temporaryName(instUUID string) string {
-	return fmt.Sprintf("lxd-move-of-%s", instUUID)
+// temporaryName returns the temporary instance name using a stable random generator.
+func temporaryName(instUUID string) (string, error) {
+	r, err := util.GetStableRandomGenerator(instUUID)
+	if err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("lxd-move-%d", r.Uint64()), nil
 }
 
 // MoveTemporaryName returns a name derived from the instance's volatile.uuid, to use when moving an instance
@@ -1064,11 +1070,11 @@ func MoveTemporaryName(inst Instance) (string, error) {
 		instUUID = uuid.New().String()
 		err := inst.VolatileSet(map[string]string{"volatile.uuid": instUUID})
 		if err != nil {
-			return "", fmt.Errorf("Failed generating instance UUID: %w", err)
+			return "", fmt.Errorf("Failed setting volatile.uuid: %w", err)
 		}
 	}
 
-	return temporaryName(instUUID), nil
+	return temporaryName(instUUID)
 }
 
 // IsSameLogicalInstance returns true if the supplied Instance and db.Instance have the same project and name or
@@ -1083,12 +1089,22 @@ func IsSameLogicalInstance(inst Instance, dbInst *db.InstanceArgs) bool {
 	if dbInst.Config["volatile.uuid"] == inst.LocalConfig()["volatile.uuid"] {
 		// Accommodate moving instances between storage pools.
 		// Check temporary copy against source.
-		if dbInst.Name == temporaryName(inst.LocalConfig()["volatile.uuid"]) {
+		tempName, err := temporaryName(inst.LocalConfig()["volatile.uuid"])
+		if err != nil {
+			return false
+		}
+
+		if dbInst.Name == tempName {
 			return true
 		}
 
 		// Check source against temporary copy.
-		if inst.Name() == temporaryName(dbInst.Config["volatile.uuid"]) {
+		tempName, err = temporaryName(dbInst.Config["volatile.uuid"])
+		if err != nil {
+			return false
+		}
+
+		if inst.Name() == tempName {
 			return true
 		}
 
