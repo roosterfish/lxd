@@ -23,6 +23,7 @@ import (
 	"github.com/go-macaroon-bakery/macaroon-bakery/v3/bakery"
 	"github.com/gorilla/mux"
 	liblxc "github.com/lxc/go-lxc"
+	"github.com/pborman/uuid"
 	"golang.org/x/sys/unix"
 
 	"github.com/canonical/lxd/lxd/acme"
@@ -143,6 +144,9 @@ type Daemon struct {
 
 	// Cluster.
 	serverName string
+
+	// Servers UUID from file.
+	serverUUID string
 
 	lokiClient *loki.Client
 
@@ -417,6 +421,7 @@ func (d *Daemon) State() *state.State {
 		GlobalConfig:           globalConfig,
 		LocalConfig:            localConfig,
 		ServerName:             d.serverName,
+		ServerUUID:             d.serverUUID,
 		StartTime:              d.startTime,
 		Authorizer:             d.authorizer,
 	}
@@ -1229,6 +1234,29 @@ func (d *Daemon) init() error {
 	if clustered {
 		version.UserAgentFeatures([]string{"cluster"})
 	}
+
+	// Setup and load the servers UUID file.
+	// Use os.VarDir to allow setting up the uuid file also in the test suite.
+	var serverUUID string
+	uuidPath := filepath.Join(d.os.VarDir, "server.uuid")
+	if !shared.PathExists(uuidPath) {
+		serverUUID = uuid.New()
+		err := os.WriteFile(uuidPath, []byte(serverUUID), 0644)
+		if err != nil {
+			return fmt.Errorf("Failed to create server.uuid file: %w", err)
+		}
+	}
+
+	if serverUUID == "" {
+		uuidBytes, err := os.ReadFile(uuidPath)
+		if err != nil {
+			return fmt.Errorf("Failed to read server.uuid file: %w", err)
+		}
+
+		serverUUID = string(uuidBytes)
+	}
+
+	d.serverUUID = serverUUID
 
 	// Mount the storage pools.
 	logger.Infof("Initializing storage pools")
