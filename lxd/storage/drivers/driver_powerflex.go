@@ -282,10 +282,21 @@ func (d *powerflex) Unmount() (bool, error) {
 
 // GetResources returns the pool resource usage information.
 func (d *powerflex) GetResources() (*api.ResourcesStoragePool, error) {
-	return &api.ResourcesStoragePool{
-		Space:  api.ResourcesStoragePoolSpace{},
-		Inodes: api.ResourcesStoragePoolInodes{},
-	}, nil
+	pool, err := d.resolvePool()
+	if err != nil {
+		return nil, err
+	}
+
+	stats, err := d.client().getStoragePoolStatistics(pool.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	res := &api.ResourcesStoragePool{}
+	res.Space.Total = stats.MaxCapacityInKb * 1000
+	res.Space.Used = stats.CapacityInUseInKb * 1000
+
+	return res, nil
 }
 
 // MigrationTypes returns the type of transfer methods to be used when doing migrations between pools in preference order.
