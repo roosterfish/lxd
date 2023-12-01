@@ -106,6 +106,12 @@ type powerFlexStoragePoolStatistics struct {
 	CapacityInUseInKb uint64 `json:"capacityInUseInKb"`
 }
 
+// powerFlexStoragePoolVolume represents a storage pools volume in PowerFlex.
+type powerFlexStoragePoolVolume struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 // powerFlexProtectionDomain represents a protection domain in PowerFlex.
 type powerFlexProtectionDomain struct {
 	ID       string `json:"id"`
@@ -312,6 +318,17 @@ func (p *powerFlexClient) getStoragePoolStatistics(poolID string) (*powerFlexSto
 	}
 
 	return &actualResponse, nil
+}
+
+// getStoragePoolVolumes returns the storage pools volumes.
+func (p *powerFlexClient) getStoragePoolVolumes(poolID string) ([]powerFlexStoragePoolVolume, error) {
+	var actualResponse []powerFlexStoragePoolVolume
+	err := p.requestAuthenticated(http.MethodGet, fmt.Sprintf("/api/instances/StoragePool::%s/relationships/Volume", poolID), nil, &actualResponse)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to get storage pool volumes: %q: %w", poolID, err)
+	}
+
+	return actualResponse, nil
 }
 
 // getProtectionDomainID returns the ID of the protection domain behind domainName.
