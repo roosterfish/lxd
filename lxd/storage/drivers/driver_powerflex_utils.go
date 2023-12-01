@@ -100,6 +100,12 @@ type powerFlexStoragePool struct {
 	ProtectionDomainID string `json:"protectionDomainId"`
 }
 
+// powerFlexStoragePoolStatistics represents the statistics of a storage pool in PowerFlex.
+type powerFlexStoragePoolStatistics struct {
+	MaxCapacityInKb   uint64 `json:"maxCapacityInKb"`
+	CapacityInUseInKb uint64 `json:"capacityInUseInKb"`
+}
+
 // powerFlexProtectionDomain represents a protection domain in PowerFlex.
 type powerFlexProtectionDomain struct {
 	ID       string `json:"id"`
@@ -292,6 +298,17 @@ func (p *powerFlexClient) getStoragePool(poolID string) (*powerFlexStoragePool, 
 	err := p.requestAuthenticated(http.MethodGet, fmt.Sprintf("/api/instances/StoragePool::%s", poolID), nil, &actualResponse)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to get storage pool: %q: %w", poolID, err)
+	}
+
+	return &actualResponse, nil
+}
+
+// getStoragePoolStatistics returns the storage pools statistics.
+func (p *powerFlexClient) getStoragePoolStatistics(poolID string) (*powerFlexStoragePoolStatistics, error) {
+	var actualResponse powerFlexStoragePoolStatistics
+	err := p.requestAuthenticated(http.MethodGet, fmt.Sprintf("/api/instances/StoragePool::%s/relationships/Statistics", poolID), nil, &actualResponse)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to get storage pool statistics: %q: %w", poolID, err)
 	}
 
 	return &actualResponse, nil
