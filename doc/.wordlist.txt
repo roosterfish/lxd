@@ -157,6 +157,7 @@ NFS
 NIC
 NICs
 NUMA
+NVMe
 NVRAM
 OData
 OIDC
@@ -184,6 +185,7 @@ PKI
 PNG
 Pongo
 POSIX
+PowerFlex
 pre
 preseed
 proxied
@@ -209,6 +211,8 @@ SATA
 scalable
 scriptlet
 SDN
+SDS
+SDT
 Seccomp
 SEV
 SFTP
@@ -299,6 +303,7 @@ VPD
 VPN
 VPS
 vSwitch
+vTree
 VXLAN
 WebSocket
 WebSockets
