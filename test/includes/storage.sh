@@ -45,6 +45,12 @@ available_storage_backends() {
         fi
     done
 
+    # `powerflex` is using the NVMe subsystem.
+    # Append the backend to the list directly since there is no such command.
+    if [ -n "${LXD_POWERFLEX:-}" ]; then
+        backends="${backends} powerflex"
+    fi
+
     echo "$backends"
 }
 

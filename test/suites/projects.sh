@@ -94,7 +94,7 @@ test_projects_containers() {
   # For backends with optimized storage, we can see the image volume inside the
   # project.
   driver="$(storage_backend "$LXD_DIR")"
-  if [ "${driver}" != "dir" ]; then
+  if [ "${driver}" != "dir" ] && [ "${driver}" != "powerflex" ]; then
       lxc storage volume list "${pool}" | grep image | grep -q "${fingerprint}"
   fi
 
@@ -685,10 +685,6 @@ test_projects_limits() {
   # the "size" config defined on the root device.
   ! lxc project set p1 limits.disk 1GiB || false
 
-  # Set a disk limit on the default profile and also on instance c2
-  lxc profile device set default root size=100MiB
-  lxc config device add c2 root disk path="/" pool="${pool}" size=50MiB
-
   if [ "${LXD_BACKEND}" = "lvm" ]; then
     # Can't set the project's disk limit because not all volumes have
     # the "size" config defined.
@@ -700,41 +696,75 @@ test_projects_limits() {
     lxc storage delete "${pool1}"
   fi
 
-  # Create a custom volume without any size property defined.
-  lxc storage volume create "${pool}" v1
+  if [ "${LXD_BACKEND}" = "powerflex" ]; then
+    # PowerFlex requires at least 8GiB per volume.
+    # Additionally the size of a volume needs to be in multiples of 8GiB.
+    # Set a disk limit on the default profile and also on instance c2
+    lxc profile device set default root size=8GiB
+    lxc config device add c2 root disk path="/" pool="${pool}" size=8GiB
 
-  # Set a size on the custom volume.
-  lxc storage volume set "${pool}" v1 size 50MiB
+    # Create a custom volume without any size property defined.
+    # This will default to 8GiB.
+    lxc storage volume create "${pool}" v1
 
-  # Can't set the project's disk limit below the current aggregate count.
-  ! lxc project set p1 limits.disk 190MiB || false
+    # Can't set the project's disk limit below the current aggregate count.
+    ! lxc project set p1 limits.disk 23GiB || false
 
-  # Set the project's disk limit
-  lxc project set p1 limits.disk 250MiB
+    # Set the project's disk limit
+    lxc project set p1 limits.disk 65536MiB
 
-  # Can't update the project's disk limit below the current aggregate count.
-  ! lxc project set p1 limits.disk 190MiB || false
+    # Changing profile or instance root device size or volume size above the
+    # aggregate project's limit is not possible.
+    ! lxc profile device set default root size=68157440KiB || false
+    ! lxc config device set c2 root size 68157440KiB || false
+    ! lxc storage volume set "${pool}" v1 size 68157440KiB || false
 
-  # Changing profile or instance root device size or volume size above the
-  # aggregate project's limit is not possible.
-  ! lxc profile device set default root size=160MiB || false
-  ! lxc config device set c2 root size 110MiB || false
-  ! lxc storage volume set "${pool}" v1 size 110MiB || false
+    # Disk limits can be updated if they stay within limits.
+    lxc profile device set default root size=16777216KiB
+    lxc config device set c2 root size 16384MiB
+  fi
 
-  # Can't create a custom volume without specifying a size.
-  ! lxc storage volume create "${pool}" v2 || false
+  if [ "${LXD_BACKEND}" != "powerflex" ]; then
+    # Set a disk limit on the default profile and also on instance c2
+    lxc profile device set default root size=100MiB
+    lxc config device add c2 root disk path="/" pool="${pool}" size=50MiB
 
-  # Disk limits can be updated if they stay within limits.
-  lxc project set p1 limits.disk 204900KiB
-  lxc profile device set default root size=90MiB
-  lxc config device set c2 root size 60MiB
+    # Create a custom volume without any size property defined.
+    lxc storage volume create "${pool}" v1
 
-  # Can't upload an image if that would exceed the current quota.
-  ! deps/import-busybox --project p1 --template start --alias otherimage || false
+    # Set a size on the custom volume.
+    lxc storage volume set "${pool}" v1 size 50MiB
 
-  # Can't export publish an instance as image if that would exceed the current
-  # quota.
-  ! lxc publish c1 --alias=c1image || false
+    # Can't set the project's disk limit below the current aggregate count.
+    ! lxc project set p1 limits.disk 190MiB || false
+
+    # Set the project's disk limit
+    lxc project set p1 limits.disk 250MiB
+
+    # Can't update the project's disk limit below the current aggregate count.
+    ! lxc project set p1 limits.disk 190MiB || false
+
+    # Changing profile or instance root device size or volume size above the
+    # aggregate project's limit is not possible.
+    ! lxc profile device set default root size=160MiB || false
+    ! lxc config device set c2 root size 110MiB || false
+    ! lxc storage volume set "${pool}" v1 size 110MiB || false
+
+    # Can't create a custom volume without specifying a size.
+    ! lxc storage volume create "${pool}" v2 || false
+
+    # Disk limits can be updated if they stay within limits.
+    lxc project set p1 limits.disk 204900KiB
+    lxc profile device set default root size=90MiB
+    lxc config device set c2 root size 60MiB
+
+    # Can't upload an image if that would exceed the current quota.
+    ! deps/import-busybox --project p1 --template start --alias otherimage || false
+
+    # Can't export publish an instance as image if that would exceed the current
+    # quota.
+    ! lxc publish c1 --alias=c1image || false
+  fi
 
   # Run the following part of the test only against the dir or zfs backend,
   # since it on other backends it requires resize the rootfs to a value which is
@@ -1029,7 +1059,7 @@ test_projects_usage() {
     limits.cpu=1 \
     limits.memory=512MiB \
     limits.processes=20
-  lxc profile device set default root size=3GiB --project test-usage
+  lxc profile device set default root size=8GiB --project test-usage
 
   # Spin up a container
   deps/import-busybox --project test-usage --alias testimage
@@ -1038,7 +1068,7 @@ test_projects_usage() {
 
   lxc project info test-usage --format csv | grep -q "CONTAINERS,UNLIMITED,1"
   lxc project info test-usage --format csv | grep -q "CPU,5,1"
-  lxc project info test-usage --format csv | grep -q "DISK,10.00GiB,3.00GiB"
+  lxc project info test-usage --format csv | grep -q "DISK,10.00GiB,8.00GiB"
   lxc project info test-usage --format csv | grep -q "INSTANCES,UNLIMITED,1"
   lxc project info test-usage --format csv | grep -q "MEMORY,1.00GiB,512.00MiB"
   lxc project info test-usage --format csv | grep -q "NETWORKS,3,0"
