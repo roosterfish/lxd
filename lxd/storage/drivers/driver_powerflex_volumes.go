@@ -1,6 +1,7 @@
 package drivers
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,10 +22,38 @@ import (
 	"github.com/canonical/lxd/shared/revert"
 	"github.com/canonical/lxd/shared/units"
 	"github.com/canonical/lxd/shared/validate"
+	"github.com/google/uuid"
 )
 
 // factorGiB divides a byte size value into Gibibytes.
 const factorGiB = 1024 * 1024 * 1024
+
+// uuidToHash translates the UUID to its hashed volume name representation.
+func (d *powerflex) uuidToHash(volumeUUID uuid.UUID) (string, error) {
+	binaryFromUUID, err := volumeUUID.MarshalBinary()
+	if err != nil {
+		return "", err
+	}
+
+	return base64.StdEncoding.EncodeToString(binaryFromUUID), nil
+}
+
+// hashToUUID translates the hashed volume name to its UUID representation.
+func (d *powerflex) hashToUUID(volumeHash string) (uuid.UUID, error) {
+	buf, err := base64.StdEncoding.DecodeString(volumeHash)
+	if err != nil {
+		fmt.Println("### failed decode string:", err.Error())
+		return uuid.UUID{}, err
+	}
+
+	uuidFromHash, err := uuid.FromBytes(buf)
+	if err != nil {
+		fmt.Println("### failed from bytes:", err.Error())
+		return uuid.UUID{}, err
+	}
+
+	return uuidFromHash, nil
+}
 
 // CreateVolume creates an empty volume and can optionally fill it by executing the supplied filler function.
 func (d *powerflex) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.Operation) error {
@@ -439,6 +468,13 @@ func (d *powerflex) commonVolumeRules() map[string]func(value string) error {
 		//  defaultdesc: same as `volume.size`
 		//  shortdesc: Size/quota of the storage volume in multiples of 8GiB
 		"size": validate.Optional(validate.IsMultipleOfUnit("8GiB")),
+		// lxdmeta:generate(entities=storage-powerflex; group=volume-conf; key=volatile.uuid)
+		//
+		// ---
+		//  type: string
+		//  defaultdesc: UUID
+		//  shortdesc: Base UUID for the hashed volume name
+		"volatile.uuid": validate.IsUUID,
 	}
 }
 
@@ -451,6 +487,9 @@ func (d *powerflex) ValidateVolume(vol Volume, removeUnknownKeys bool) error {
 	if strings.Contains(vol.name, "@") {
 		return fmt.Errorf("Name cannot contain the special character %q", "@")
 	}
+
+	// Set the volumes volatile UUID for the hashed volume name.
+	vol.config["volatile.uuid"] = uuid.New().String()
 
 	commonRules := d.commonVolumeRules()
 
@@ -911,6 +950,8 @@ func (d *powerflex) BackupVolume(vol Volume, tarWriter *instancewriter.InstanceT
 func (d *powerflex) CreateVolumeSnapshot(snapVol Volume, op *operations.Operation) error {
 	revert := revert.New()
 	defer revert.Fail()
+
+	fmt.Println("### CreateVolumeSnapshot: snapVol config:", snapVol.config)
 
 	parentName, _, _ := api.GetParentAndSnapshotName(snapVol.name)
 	sourcePath := GetVolumeMountPath(d.name, snapVol.volType, parentName)

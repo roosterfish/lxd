@@ -2102,8 +2102,7 @@ func (b *lxdBackend) RenameInstance(inst instance.Instance, newName string, op *
 	}
 
 	revert.Add(func() {
-		// There's no need to pass config as it's not needed when renaming a volume.
-		newVol := b.GetVolume(volType, contentType, newVolStorageName, nil)
+		newVol := b.GetVolume(volType, contentType, newVolStorageName, volume.Config)
 		_ = b.driver.RenameVolume(newVol, volStorageName, op)
 	})
 
@@ -2174,8 +2173,12 @@ func (b *lxdBackend) DeleteInstance(inst instance.Instance, op *operations.Opera
 	volStorageName := project.Instance(inst.Project().Name, inst.Name())
 	contentType := InstanceContentType(inst)
 
-	// There's no need to pass config as it's not needed when deleting a volume.
-	vol := b.GetVolume(volType, contentType, volStorageName, nil)
+	volume, err := VolumeDBGet(b, inst.Project().Name, inst.Name(), volType)
+	if err != nil {
+		return err
+	}
+
+	vol := b.GetVolume(volType, contentType, volStorageName, volume.Config)
 
 	// Delete the volume from the storage device. Must come after snapshots are removed.
 	// Must come before DB VolumeDBDelete so that the volume ID is still available.
@@ -2432,8 +2435,12 @@ func (b *lxdBackend) CleanupInstancePaths(inst instance.Instance, op *operations
 	volStorageName := project.Instance(inst.Project().Name, inst.Name())
 	contentType := InstanceContentType(inst)
 
-	// There's no need to pass config as it's not needed when deleting a volume.
-	vol := b.GetVolume(volType, contentType, volStorageName, nil)
+	volume, err := VolumeDBGet(b, inst.Project().Name, inst.Name(), volType)
+	if err != nil {
+		return err
+	}
+
+	vol := b.GetVolume(volType, contentType, volStorageName, volume.Config)
 
 	// Remove empty snapshot mount paths.
 	snapshotDir := drivers.GetVolumeSnapshotDir(b.Name(), vol.Type(), vol.Name())
@@ -2561,9 +2568,13 @@ func (b *lxdBackend) GetInstanceUsage(inst instance.Instance) (*VolumeUsage, err
 	contentType := InstanceContentType(inst)
 	val := VolumeUsage{}
 
-	// There's no need to pass config as it's not needed when retrieving the volume usage.
+	volume, err := VolumeDBGet(b, inst.Project().Name, inst.Name(), volType)
+	if err != nil {
+		return nil, err
+	}
+
 	volStorageName := project.Instance(inst.Project().Name, inst.Name())
-	vol := b.GetVolume(volType, contentType, volStorageName, nil)
+	vol := b.GetVolume(volType, contentType, volStorageName, volume.Config)
 
 	// Get the usage.
 	size, err := b.driver.GetVolumeUsage(vol)
@@ -2617,7 +2628,6 @@ func (b *lxdBackend) SetInstanceQuota(inst instance.Instance, size string, vmSta
 	}
 
 	// Apply the main volume quota.
-	// There's no need to pass config as it's not needed when setting quotas.
 	vol := b.GetVolume(volType, contentVolume, volStorageName, dbVol.Config)
 	err = b.driver.SetVolumeQuota(vol, size, false, op)
 	if err != nil {
@@ -2778,10 +2788,13 @@ func (b *lxdBackend) getInstanceDisk(inst instance.Instance) (string, error) {
 	contentType := InstanceContentType(inst)
 	volStorageName := project.Instance(inst.Project().Name, inst.Name())
 
+	volume, err := VolumeDBGet(b, inst.Project().Name, inst.Name(), volType)
+	if err != nil {
+		return "", err
+	}
+
 	// Get the volume.
-	// There's no need to pass config as it's not needed when getting the
-	// location of the disk block device.
-	vol := b.GetVolume(volType, contentType, volStorageName, nil)
+	vol := b.GetVolume(volType, contentType, volStorageName, volume.Config)
 
 	// Get the location of the disk block device.
 	diskPath, err := b.driver.GetVolumeDiskPath(vol)
@@ -2852,8 +2865,7 @@ func (b *lxdBackend) CreateInstanceSnapshot(inst instance.Instance, src instance
 	volStorageName := project.Instance(inst.Project().Name, inst.Name())
 
 	// Get the volume.
-	// There's no need to pass config as it's not needed when creating volume snapshots.
-	vol := b.GetVolume(volType, contentType, volStorageName, nil)
+	vol := b.GetVolume(volType, contentType, volStorageName, srcDBVol.Config)
 
 	// Lock this operation to ensure that the only one snapshot is made at the time.
 	// Other operations will wait for this one to finish.
@@ -2978,8 +2990,12 @@ func (b *lxdBackend) DeleteInstanceSnapshot(inst instance.Instance, op *operatio
 
 	snapVolName := drivers.GetSnapshotVolumeName(parentStorageName, snapName)
 
-	// There's no need to pass config as it's not needed when deleting a volume snapshot.
-	vol := b.GetVolume(volType, contentType, snapVolName, nil)
+	volume, err := VolumeDBGet(b, inst.Project().Name, inst.Name(), volType)
+	if err != nil {
+		return err
+	}
+
+	vol := b.GetVolume(volType, contentType, snapVolName, volume.Config)
 
 	volExists, err := b.driver.HasVolume(vol)
 	if err != nil {
@@ -5293,8 +5309,7 @@ func (b *lxdBackend) DeleteCustomVolume(projectName string, volName string, op *
 		return err
 	}
 
-	// There's no need to pass config as it's not needed when deleting a volume.
-	vol := b.GetVolume(drivers.VolumeTypeCustom, contentType, volStorageName, nil)
+	vol := b.GetVolume(drivers.VolumeTypeCustom, contentType, volStorageName, curVol.Config)
 
 	// Delete the volume from the storage device. Must come after snapshots are removed.
 	volExists, err := b.driver.HasVolume(vol)
@@ -5344,8 +5359,7 @@ func (b *lxdBackend) GetCustomVolumeDisk(projectName, volName string) (string, e
 	// Get the volume name on storage.
 	volStorageName := project.StorageVolume(projectName, volName)
 
-	// There's no need to pass config as it's not needed when getting the volume usage.
-	vol := b.GetVolume(drivers.VolumeTypeCustom, drivers.ContentType(volume.ContentType), volStorageName, nil)
+	vol := b.GetVolume(drivers.VolumeTypeCustom, drivers.ContentType(volume.ContentType), volStorageName, volume.Config)
 
 	return b.driver.GetVolumeDiskPath(vol)
 }
@@ -5367,8 +5381,7 @@ func (b *lxdBackend) GetCustomVolumeUsage(projectName, volName string) (*VolumeU
 	// Get the volume name on storage.
 	volStorageName := project.StorageVolume(projectName, volName)
 
-	// There's no need to pass config as it's not needed when getting the volume usage.
-	vol := b.GetVolume(drivers.VolumeTypeCustom, drivers.ContentType(volume.ContentType), volStorageName, nil)
+	vol := b.GetVolume(drivers.VolumeTypeCustom, drivers.ContentType(volume.ContentType), volStorageName, volume.Config)
 
 	// Get the usage.
 	size, err := b.driver.GetVolumeUsage(vol)
@@ -5643,8 +5656,7 @@ func (b *lxdBackend) RenameCustomVolumeSnapshot(projectName, volName string, new
 	// Get the volume name on storage.
 	volStorageName := project.StorageVolume(projectName, volName)
 
-	// There's no need to pass config as it's not needed when renaming a volume.
-	vol := b.GetVolume(drivers.VolumeTypeCustom, drivers.ContentType(volume.ContentType), volStorageName, nil)
+	vol := b.GetVolume(drivers.VolumeTypeCustom, drivers.ContentType(volume.ContentType), volStorageName, volume.Config)
 
 	err = b.driver.RenameVolumeSnapshot(vol, newSnapshotName, op)
 	if err != nil {
@@ -5700,8 +5712,7 @@ func (b *lxdBackend) DeleteCustomVolumeSnapshot(projectName, volName string, op 
 	// Get the volume name on storage.
 	volStorageName := project.StorageVolume(projectName, volName)
 
-	// There's no need to pass config as it's not needed when deleting a volume snapshot.
-	vol := b.GetVolume(drivers.VolumeTypeCustom, contentType, volStorageName, nil)
+	vol := b.GetVolume(drivers.VolumeTypeCustom, contentType, volStorageName, volume.Config)
 
 	// Delete the snapshot from the storage device.
 	// Must come before DB VolumeDBDelete so that the volume ID is still available.

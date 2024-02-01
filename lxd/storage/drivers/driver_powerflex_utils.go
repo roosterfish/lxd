@@ -22,6 +22,7 @@ import (
 	"github.com/canonical/lxd/shared"
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/lxd/shared/revert"
+	"github.com/google/uuid"
 )
 
 // powerFlexBlockVolSuffix suffix used for block content type volumes.
@@ -799,37 +800,51 @@ func (d *powerflex) getVolumeType(vol Volume) powerFlexVolumeType {
 
 // getVolumeName returns the fully qualified name derived from the volume.
 func (d *powerflex) getVolumeName(vol Volume) string {
-	var out string
-	parentName, snapshotName, isSnapshot := api.GetParentAndSnapshotName(vol.name)
-
-	// Only use filesystem suffix on filesystem type image volumes (for all content types).
-	// Since PowerFlex volumes can be 31 characters long at max, use the image fingerprint.
-	if vol.volType == VolumeTypeImage {
-		parentName = fmt.Sprintf("%s_%s", parentName[0:12], vol.ConfigBlockFilesystem())
+	volumeUUID, err := uuid.Parse(vol.config["volatile.uuid"])
+	if err != nil {
+		fmt.Println("### failed uuid.Parse:", err.Error())
+		return ""
 	}
 
-	if vol.contentType == ContentTypeBlock {
-		parentName = fmt.Sprintf("%s%s", parentName, powerFlexBlockVolSuffix)
-	} else if vol.contentType == ContentTypeISO {
-		parentName = fmt.Sprintf("%s%s", parentName, powerFlexISOVolSuffix)
+	volumeHash, err := d.uuidToHash(volumeUUID)
+	if err != nil {
+		fmt.Println("### failed uuidToHash:", err.Error())
+		return ""
 	}
 
-	// Use volume's type as storage volume prefix, unless there is an override in powerFlexVolTypePrefixes.
-	volumeTypePrefix := string(vol.volType)
-	volumeTypePrefixOverride, foundOveride := powerFlexVolTypePrefixes[vol.volType]
-	if foundOveride {
-		volumeTypePrefix = volumeTypePrefixOverride
-	}
+	return volumeHash
 
-	if isSnapshot {
-		// If volumeName is a snapshot (<vol>/<snap>) and snapName is not set,
-		// assume that it's a normal snapshot and add @snapshotName.
-		out = fmt.Sprintf("%s_%s@%s", volumeTypePrefix, parentName, snapshotName)
-	} else {
-		out = fmt.Sprintf("%s_%s", volumeTypePrefix, parentName)
-	}
+	// var out string
+	// parentName, snapshotName, isSnapshot := api.GetParentAndSnapshotName(vol.name)
 
-	return out
+	// // Only use filesystem suffix on filesystem type image volumes (for all content types).
+	// // Since PowerFlex volumes can be 31 characters long at max, use the image fingerprint.
+	// if vol.volType == VolumeTypeImage {
+	// 	parentName = fmt.Sprintf("%s_%s", parentName[0:12], vol.ConfigBlockFilesystem())
+	// }
+
+	// if vol.contentType == ContentTypeBlock {
+	// 	parentName = fmt.Sprintf("%s%s", parentName, powerFlexBlockVolSuffix)
+	// } else if vol.contentType == ContentTypeISO {
+	// 	parentName = fmt.Sprintf("%s%s", parentName, powerFlexISOVolSuffix)
+	// }
+
+	// // Use volume's type as storage volume prefix, unless there is an override in powerFlexVolTypePrefixes.
+	// volumeTypePrefix := string(vol.volType)
+	// volumeTypePrefixOverride, foundOveride := powerFlexVolTypePrefixes[vol.volType]
+	// if foundOveride {
+	// 	volumeTypePrefix = volumeTypePrefixOverride
+	// }
+
+	// if isSnapshot {
+	// 	// If volumeName is a snapshot (<vol>/<snap>) and snapName is not set,
+	// 	// assume that it's a normal snapshot and add @snapshotName.
+	// 	out = fmt.Sprintf("%s_%s@%s", volumeTypePrefix, parentName, snapshotName)
+	// } else {
+	// 	out = fmt.Sprintf("%s_%s", volumeTypePrefix, parentName)
+	// }
+
+	// return out
 }
 
 // createNVMeHost creates this NVMe host in PowerFlex.
