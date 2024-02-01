@@ -89,7 +89,7 @@ func IsUint32(value string) error {
 
 // ParseUint32Range parses a uint32 range in the form "number" or "start-end".
 // Returns the start number and the size of the range.
-func ParseUint32Range(value string) (uint32, uint32, error) {
+func ParseUint32Range(value string) (start uint32, size uint32, err error) {
 	rangeParts := strings.SplitN(value, "-", 2)
 	rangeLen := len(rangeParts)
 	if rangeLen != 1 && rangeLen != 2 {
@@ -674,8 +674,8 @@ func IsAbsFilePath(value string) error {
 
 // ParseNetworkVLANRange parses a VLAN range in the form "number" or "start-end".
 // Returns the start number and the number of items in the range.
-func ParseNetworkVLANRange(vlan string) (int, int, error) {
-	err := IsNetworkVLAN(vlan)
+func ParseNetworkVLANRange(vlan string) (start int, count int, err error) {
+	err = IsNetworkVLAN(vlan)
 	if err == nil {
 		vlanRangeStart, err := strconv.Atoi(vlan)
 		if err != nil {
