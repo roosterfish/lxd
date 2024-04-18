@@ -565,14 +565,9 @@ func (d *powerflex) SetVolumeQuota(vol Volume, size string, allowUnsafeResize bo
 		return fmt.Errorf("Error getting current size: %w", err)
 	}
 
-	volName, err := d.getVolumeName(vol)
-	if err != nil {
-		return err
-	}
-
 	// Ensure the volume is unmapped.
 	// Resizing the volume in PowerFlex whilst it is mapped to the system using NVMe/TCP will raise errors.
-	err = d.unmapVolume(volName)
+	err = d.unmapVolume(vol)
 	if err != nil {
 		return err
 	}
@@ -592,6 +587,11 @@ func (d *powerflex) SetVolumeQuota(vol Volume, size string, allowUnsafeResize bo
 	// During initial volume fill allowUnsafeResize is enabled because snapshot hasn't been taken yet.
 	if !allowUnsafeResize && vol.volType == VolumeTypeImage {
 		return ErrNotSupported
+	}
+
+	volName, err := d.getVolumeName(vol)
+	if err != nil {
+		return err
 	}
 
 	client := d.client()
@@ -753,11 +753,6 @@ func (d *powerflex) UnmountVolume(vol Volume, keepBlockDev bool, op *operations.
 	mountPath := vol.MountPath()
 	refCount := vol.MountRefCountDecrement()
 
-	volName, err := d.getVolumeName(vol)
-	if err != nil {
-		return false, err
-	}
-
 	// Attempt to unmount the volume.
 	if vol.contentType == ContentTypeFS && filesystem.IsMountPoint(mountPath) {
 		if refCount > 0 {
@@ -774,10 +769,11 @@ func (d *powerflex) UnmountVolume(vol Volume, keepBlockDev bool, op *operations.
 
 		// Attempt to unmap.
 		if !keepBlockDev {
-			err = d.unmapVolume(volName)
+			err = d.unmapVolume(vol)
 			if err != nil {
 				return false, err
 			}
+
 		}
 
 		ourUnmount = true
@@ -801,7 +797,7 @@ func (d *powerflex) UnmountVolume(vol Volume, keepBlockDev bool, op *operations.
 				}
 
 				// Attempt to unmap.
-				err := d.unmapVolume(volName)
+				err := d.unmapVolume(vol)
 				if err != nil {
 					return false, err
 				}

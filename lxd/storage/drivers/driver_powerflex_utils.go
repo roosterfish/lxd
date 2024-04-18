@@ -36,6 +36,7 @@ const powerFlexISOVolSuffix = ".i"
 const powerFlexCodeVolumeNotFound = 79
 const powerFlexCodeDomainNotFound = 142
 const powerFlexCodeNameTooLong = 226
+const powerFlexInvalidMapping = 4039
 
 type powerFlexVolumeType string
 type powerFlexSnapshotMode string
@@ -131,12 +132,15 @@ type powerFlexProtectionDomainSDTRelation struct {
 	} `json:"ipList"`
 }
 
-// powerFlexSDC represents a SDC in PowerFlex.
+// powerFlexSDC represents a SDC host in PowerFlex.
+// The same data structure is used to identify NVMe/TCP hosts.
 type powerFlexSDC struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
 	HostType string `json:"hostType"`
 	NQN      string `json:"nqn"`
+	SDCGuid  string `json:"sdcGuid"`
+	SystemID string `json:"systemId"`
 }
 
 // powerFlexVolume represents a volume in PowerFlex.
@@ -602,6 +606,23 @@ func (p *powerFlexClient) getNVMeHosts() ([]powerFlexSDC, error) {
 	return nvmeHosts, nil
 }
 
+// getSDCHosts returns all SDC hosts.
+func (p *powerFlexClient) getSDCHosts() ([]powerFlexSDC, error) {
+	allHosts, err := p.getHosts()
+	if err != nil {
+		return nil, err
+	}
+
+	var sdcHosts []powerFlexSDC
+	for _, host := range allHosts {
+		if host.HostType == "SdcHost" {
+			sdcHosts = append(sdcHosts, host)
+		}
+	}
+
+	return sdcHosts, nil
+}
+
 // getNVMeHostByNQN returns the NVMe host matching the nqn.
 func (p *powerFlexClient) getNVMeHostByNQN(nqn string) (*powerFlexSDC, error) {
 	allNVMeHosts, err := p.getNVMeHosts()
@@ -616,6 +637,22 @@ func (p *powerFlexClient) getNVMeHostByNQN(nqn string) (*powerFlexSDC, error) {
 	}
 
 	return nil, api.StatusErrorf(http.StatusNotFound, "Host not found using nqn: %q", nqn)
+}
+
+// getSDCHostByGUID returns the SDC host matching the GUID.
+func (p *powerFlexClient) getSDCHostByGUID(guid string) (*powerFlexSDC, error) {
+	allSDCHosts, err := p.getSDCHosts()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, host := range allSDCHosts {
+		if host.SDCGuid == guid {
+			return &host, nil
+		}
+	}
+
+	return nil, api.StatusErrorf(http.StatusNotFound, "Host not found using GUID: %q", guid)
 }
 
 // createHost creates a new host.
@@ -670,6 +707,7 @@ func (p *powerFlexClient) createHostVolumeMapping(hostID string, volumeID string
 }
 
 // deleteHostVolumeMapping deletes the mapping between a host and volume.
+// Set hostIdentification to either its hostID in PowerFlex or SDC guid.
 func (p *powerFlexClient) deleteHostVolumeMapping(hostID string, volumeID string) error {
 	body, err := p.createBodyReader(map[string]any{
 		"hostId": hostID,
@@ -680,6 +718,14 @@ func (p *powerFlexClient) deleteHostVolumeMapping(hostID string, volumeID string
 
 	err = p.requestAuthenticated(http.MethodPost, fmt.Sprintf("/api/instances/Volume::%s/action/removeMappedHost", volumeID), body, nil)
 	if err != nil {
+		powerFlexError, ok := err.(*powerFlexError)
+		if ok {
+			// API returns 500 if the mapping doesn't anymore exist.
+			// To not confuse it with other 500 that might occur check the error code too.
+			if powerFlexError.HTTPStatusCode() == http.StatusInternalServerError && powerFlexError.ErrorCode() == powerFlexInvalidMapping {
+				return api.StatusErrorf(http.StatusNotFound, "The mapping between %q and %q does not exist", hostID, volumeID)
+			}
+		}
 		return fmt.Errorf("Failed to delete host volume mapping between %q and %q: %w", hostID, volumeID, err)
 	}
 
@@ -861,6 +907,63 @@ func (d *powerflex) mapNVMeVolume(volumeName string) (revert.Hook, error) {
 	return cleanup, nil
 }
 
+func (d *powerflex) getHostGUID() (string, error) {
+	// Make sure to follow the path as the default SDC binary location is usually a link.
+	guid, err := shared.RunCommand(shared.HostPathFollow(d.config["powerflex.sdc.binary"]), "--query_guid")
+	if err != nil {
+		return "", fmt.Errorf("Failed to get SDC host GUID: %w", err)
+	}
+
+	return strings.TrimSuffix(guid, "\n"), nil
+}
+
+// mapSDCVolume maps the given volume onto this host.
+func (d *powerflex) mapSDCVolume(volumeName string) (revert.Hook, error) {
+	revert := revert.New()
+	defer revert.Fail()
+
+	hostGUID, err := d.getHostGUID()
+	if err != nil {
+		return nil, err
+	}
+
+	client := d.client()
+	host, err := client.getSDCHostByGUID(hostGUID)
+	if err != nil {
+		return nil, err
+	}
+
+	volumeID, err := client.getVolumeID(volumeName)
+	if err != nil {
+		return nil, err
+	}
+
+	volume, err := client.getVolume(volumeID)
+	if err != nil {
+		return nil, err
+	}
+
+	mapped := false
+	for _, mapping := range volume.MappedSDCInfo {
+		if mapping.SDCID == host.ID {
+			mapped = true
+		}
+	}
+
+	if !mapped {
+		err = client.createHostVolumeMapping(host.ID, volumeID)
+		if err != nil {
+			return nil, err
+		}
+
+		revert.Add(func() { _ = client.deleteHostVolumeMapping(host.ID, volumeID) })
+	}
+
+	cleanup := revert.Clone().Fail
+	revert.Success()
+	return cleanup, nil
+}
+
 // getNVMeMappedDevPath returns the local device path for the given NVMe volume name.
 // Set mapVolume to true if the volume isn't already mapped to this host.
 func (d *powerflex) getNVMeMappedDevPath(volumeName string, mapVolume bool) (string, revert.Hook, error) {
@@ -970,15 +1073,120 @@ func (d *powerflex) getNVMeMappedDevPath(volumeName string, mapVolume bool) (str
 	return powerFlexVolumePath, cleanup, nil
 }
 
-// getMappedDevPath returns the local device path for the given volume name.
-func (d *powerflex) getMappedDevPath(vol Volume, mapVolume bool) (string, revert.Hook, error) {
-	if d.config["powerflex.mode"] == "nvme" {
-		volName, err := d.getVolumeName(vol)
+// getSDCMappedDevPath returns the local device path for the given SDC volume name.
+// Set mapVolume to true if the volume isn't already mapped to this host.
+func (d *powerflex) getSDCMappedDevPath(volumeName string, mapVolume bool) (string, revert.Hook, error) {
+	revert := revert.New()
+	defer revert.Fail()
+
+	if mapVolume {
+		cleanup, err := d.mapSDCVolume(volumeName)
 		if err != nil {
 			return "", nil, err
 		}
 
+		revert.Add(cleanup)
+	}
+
+	powerFlexVolumes := make(map[string]string)
+
+	// discoverFunc has to be called in a loop with a set timeout to ensure
+	// all the necessary directories and devices can be discovered.
+	discoverFunc := func(volumeID string) error {
+		var diskPaths []string
+
+		// If there are no other disks on the system by id, the directory might not even be there.
+		// Returns ENOENT in case the by-id/ directory does not exist.
+		diskPaths, err := resources.GetDisksByID("emc-vol-")
+		if err != nil {
+			return err
+		}
+
+		for _, diskPath := range diskPaths {
+			// Skip the disk if it doesn't end on the volume's ID.
+			// This could be the case for other volumes or paritions of the actual volume.
+			if !strings.HasSuffix(diskPath, volumeID) {
+				continue
+			}
+
+			// The actual /dev/sciniX might not already be created.
+			// Returns ENOENT in case the sciniX device does not exist.
+			devPath, err := filepath.EvalSymlinks(diskPath)
+			if err != nil {
+				return err
+			}
+
+			powerFlexVolumes[volumeID] = devPath
+		}
+
+		return nil
+	}
+
+	client := d.client()
+	powerFlexVolumeID, err := client.getVolumeID(volumeName)
+	if err != nil {
+		return "", nil, err
+	}
+
+	timeout := time.Now().Add(5 * time.Second)
+	// It might take the NVMe/TCP subsystem a while to create the local disk.
+	// Retry until it can be found.
+	for {
+		if time.Now().After(timeout) {
+			return "", nil, fmt.Errorf("Timeout exceeded for SDC volume discovery: %q", volumeName)
+		}
+
+		err := discoverFunc(powerFlexVolumeID)
+		if err != nil {
+			// Try again if on of the directories cannot be found.
+			if errors.Is(err, unix.ENOENT) {
+				continue
+			}
+
+			return "", nil, err
+		}
+
+		// Exit if the volume got discovered.
+		_, ok := powerFlexVolumes[powerFlexVolumeID]
+		if ok {
+			break
+		}
+
+		// Exit if the volume wasn't explicitly mapped.
+		// Doing a retry would run into the timeout when the device isn't mapped.
+		if !mapVolume {
+			break
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if len(powerFlexVolumes) == 0 {
+		return "", nil, fmt.Errorf("Failed to discover any SDC volume")
+	}
+
+	powerFlexVolumePath, ok := powerFlexVolumes[powerFlexVolumeID]
+	if !ok {
+		return "", nil, fmt.Errorf("Volume not found: %q", volumeName)
+	}
+
+	cleanup := revert.Clone().Fail
+	revert.Success()
+	return powerFlexVolumePath, cleanup, nil
+}
+
+// getMappedDevPath returns the local device path for the given volume name.
+func (d *powerflex) getMappedDevPath(vol Volume, mapVolume bool) (string, revert.Hook, error) {
+	volName, err := d.getVolumeName(vol)
+	if err != nil {
+		return "", nil, err
+	}
+
+	switch d.config["powerflex.mode"] {
+	case "nvme":
 		return d.getNVMeMappedDevPath(volName, mapVolume)
+	case "sdc":
+		return d.getSDCMappedDevPath(volName, mapVolume)
 	}
 
 	return "", nil, ErrNotSupported
@@ -1027,13 +1235,68 @@ func (d *powerflex) unmapNVMeVolume(volumeName string) error {
 	return nil
 }
 
-// unmapVolume unmaps the given volume from this host.
-func (d *powerflex) unmapVolume(volumeName string) error {
-	if d.config["powerflex.mode"] == "nvme" {
-		return d.unmapNVMeVolume(volumeName)
+// unmapSDCVolume unmaps the given SDC volume from this host.
+func (d *powerflex) unmapSDCVolume(volumeName string) error {
+	client := d.client()
+	volume, err := client.getVolumeID(volumeName)
+	if err != nil {
+		return err
 	}
 
-	return ErrNotSupported
+	hostGUID, err := d.getHostGUID()
+	if err != nil {
+		return err
+	}
+
+	host, err := client.getSDCHostByGUID(hostGUID)
+	if err != nil {
+		return err
+	}
+
+	err = client.deleteHostVolumeMapping(host.ID, volume)
+	if err != nil {
+		fmt.Println("failed to delete mapping:", err.Error())
+
+		// Skip errors if the mapping already got deleted.
+		if !api.StatusErrorCheck(err, http.StatusNotFound) {
+			return err
+		}
+	}
+
+	fmt.Println("succeeded to delete mapping")
+
+	return nil
+}
+
+// unmapVolume unmaps the given volume from this host.
+func (d *powerflex) unmapVolume(vol Volume) error {
+	volumeName, err := d.getVolumeName(vol)
+	if err != nil {
+		return err
+	}
+
+	switch d.config["powerflex.mode"] {
+	case "nvme":
+		err := d.unmapNVMeVolume(volumeName)
+		if err != nil {
+			return err
+		}
+	case "sdc":
+		err := d.unmapSDCVolume(volumeName)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Wait until volume disappeared.
+	volumePath, _, _ := d.getMappedDevPath(vol, false)
+	if volumePath != "" {
+		if !tryGone(volumePath) {
+			return fmt.Errorf("Timeout whilst waiting for volume to disappear: %q", vol.name)
+		}
+	}
+
+	return nil
 }
 
 // connectNVMeSubsys connects this host to the NVMe subsystem configured in the storage pool.

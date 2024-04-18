@@ -211,6 +211,19 @@ func tryExists(path string) bool {
 	return false
 }
 
+func tryGone(path string) bool {
+	// Attempt 20 checks over 10s
+	for i := 0; i < 20; i++ {
+		if !shared.PathExists(path) {
+			return true
+		}
+
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	return false
+}
+
 // fsUUID returns the filesystem UUID for the given block path.
 func fsUUID(path string) (string, error) {
 	val, err := shared.RunCommand("blkid", "-s", "UUID", "-o", "value", path)

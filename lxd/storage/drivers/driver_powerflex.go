@@ -98,6 +98,11 @@ func (d *powerflex) FillConfig() error {
 		d.config["volume.size"] = powerFlexDefaultSize
 	}
 
+	// Set the default path of the drv_cfg binary for SDC mode.
+	if d.config["powerflex.sdc.binary"] == "" {
+		d.config["powerflex.sdc.binary"] = "/opt/emc/scaleio/sdc/bin/drv_cfg"
+	}
+
 	return nil
 }
 
@@ -127,8 +132,9 @@ func (d *powerflex) Create() error {
 
 	client := d.client()
 
-	// Discover one of the storage pools SDS services.
-	if d.config["powerflex.mode"] == "nvme" {
+	switch d.config["powerflex.mode"] {
+	case "nvme":
+		// Discover one of the storage pools SDT services.
 		if d.config["powerflex.sdt"] == "" {
 			pool, err := d.resolvePool()
 			if err != nil {
@@ -149,6 +155,11 @@ func (d *powerflex) Create() error {
 			}
 
 			d.config["powerflex.sdt"] = relations[0].IPList[0].IP
+		}
+	case "sdc":
+		// Check if the SDC binary exists on the host.
+		if !shared.PathExists(shared.HostPath(d.config["powerflex.sdc.binary"])) {
+			return fmt.Errorf("Cannot find powerflex.sdc.binary at %q", d.config["powerflex.sdc.binary"])
 		}
 	}
 
@@ -222,7 +233,7 @@ func (d *powerflex) Validate(config map[string]string) error {
 		//  type: string
 		//  defaultdesc: the discovered mode
 		//  shortdesc: How volumes are mapped to the local server
-		"powerflex.mode": validate.Optional(validate.IsOneOf("nvme")),
+		"powerflex.mode": validate.Optional(validate.IsOneOf("nvme", "sdc")),
 		// lxdmeta:generate(entities=storage-powerflex; group=pool-conf; key=powerflex.sdt)
 		//
 		// ---
@@ -245,7 +256,8 @@ func (d *powerflex) Validate(config map[string]string) error {
 		//  type: string
 		//  defaultdesc: `8GiB`
 		//  shortdesc: Size/quota of the storage volume
-		"volume.size": validate.Optional(validate.IsMultipleOfUnit("8GiB")),
+		"volume.size":          validate.Optional(validate.IsMultipleOfUnit("8GiB")),
+		"powerflex.sdc.binary": validate.Optional(validate.IsAbsFilePath),
 	}
 
 	err := d.validatePool(config, rules, d.commonVolumeRules())

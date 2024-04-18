@@ -24,6 +24,9 @@ profile "{{ .name }}" flags=(attach_disconnected,mediate_deleted) {
   capability ipc_lock,
 
   /sys/devices/**/block/*/queue/max_segments  r,
+  /sys/devices/**/block/*/queue/zoned r,
+  /sys/devices/system/node/ r,
+  /sys/devices/system/node/*/meminfo r,
 
 {{range $index, $element := .allowedCmdPaths}}
   {{$element}} mixr,
