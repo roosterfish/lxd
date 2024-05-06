@@ -20,5 +20,8 @@ func TestSafeLoad_IgnoreInvalidKeys(t *testing.T) {
 	m, err := config.SafeLoad(schema, values)
 	require.NoError(t, err)
 
-	assert.Equal(t, map[string]string{"bar": "x"}, m.Dump())
+	d, err := m.Dump()
+	assert.Nil(t, err)
+
+	assert.Equal(t, map[string]string{"bar": "x"}, d)
 }

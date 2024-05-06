@@ -52,7 +52,10 @@ func TestLoad(t *testing.T) {
 			require.NoError(t, err)
 
 			for name, value := range c.result {
-				assert.Equal(t, value, m.GetRaw(name))
+				rawValue, err := m.GetRaw(name)
+				assert.Nil(t, err)
+
+				assert.Equal(t, value, rawValue)
 			}
 		})
 	}
@@ -150,7 +153,10 @@ func TestChange(t *testing.T) {
 			require.NoError(t, err)
 
 			for name, value := range c.result {
-				assert.Equal(t, value, m.GetRaw(name))
+				rawValue, err := m.GetRaw(name)
+				assert.Nil(t, err)
+
+				assert.Equal(t, value, rawValue)
 			}
 		})
 	}
@@ -269,7 +275,10 @@ func TestMap_Dump(t *testing.T) {
 		"foo": "hello",
 	}
 
-	assert.Equal(t, dump, m.Dump())
+	d, err := m.Dump()
+	assert.Nil(t, err)
+
+	assert.Equal(t, dump, d)
 }
 
 // The various GetXXX methods return typed values.
@@ -289,9 +298,20 @@ func TestMap_Getters(t *testing.T) {
 	m, err := config.Load(schema, values)
 	assert.NoError(t, err)
 
-	assert.Equal(t, "hello", m.GetString("foo"))
-	assert.Equal(t, true, m.GetBool("bar"))
-	assert.Equal(t, int64(123), m.GetInt64("egg"))
+	s, err := m.GetString("foo")
+	assert.Nil(t, err)
+
+	assert.Equal(t, "hello", s)
+
+	b, err := m.GetBool("bar")
+	assert.Nil(t, err)
+
+	assert.Equal(t, true, b)
+
+	i, err := m.GetInt64("egg")
+	assert.Nil(t, err)
+
+	assert.Equal(t, int64(123), i)
 }
 
 // The various GetXXX methods panic if they are used with the wrong key name or

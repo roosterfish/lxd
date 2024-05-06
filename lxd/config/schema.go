@@ -37,23 +37,29 @@ func (s Schema) Defaults() map[string]string {
 	return values
 }
 
-// Get the Key associated with the given name, or panic.
-func (s Schema) mustGetKey(name string) Key {
+// Get the Key associated with the given name, or return error.
+func (s Schema) mustGetKey(name string) (Key, error) {
 	key, ok := s[name]
 	if !ok {
-		panic(fmt.Sprintf("attempt to access unknown key '%s'", name))
+		return Key{}, fmt.Errorf("Attempt to access unknown key %q", name)
 	}
 
-	return key
+	return key, nil
 }
 
-// Assert that the Key with the given name as the given type. Panic if no Key
+// Assert that the Key with the given name as the given type. Return error if no Key
 // with such name exists, or if it does not match the tiven type.
-func (s Schema) assertKeyType(name string, code Type) {
-	key := s.mustGetKey(name)
-	if key.Type != code {
-		panic(fmt.Sprintf("key '%s' has type code %d, not %d", name, key.Type, code))
+func (s Schema) assertKeyType(name string, code Type) error {
+	key, err := s.mustGetKey(name)
+	if err != nil {
+		return err
 	}
+
+	if key.Type != code {
+		fmt.Errorf("key %q has type code %d, not %d", name, key.Type, code)
+	}
+
+	return nil
 }
 
 // Key defines the type of the value of a particular config key, along with
@@ -112,7 +118,7 @@ func (v *Key) validate(value string) error {
 		}
 
 	default:
-		panic(fmt.Sprintf("unexpected value type: %d", v.Type))
+		return fmt.Errorf("unexpected value type: %d", v.Type)
 	}
 
 	if v.Deprecated != "" && value != v.Default {
