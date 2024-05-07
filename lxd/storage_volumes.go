@@ -1423,7 +1423,12 @@ func storagePoolVolumePost(d *Daemon, r *http.Request) response.Response {
 				return fmt.Errorf("Failed to get source member for %q: %w", sourceAddress, err)
 			}
 
-			sourceNodeOffline = sourceMemberInfo.IsOffline(s.GlobalConfig.OfflineThreshold())
+			offlineThreshold, err := s.GlobalConfig.OfflineThreshold()
+			if err != nil {
+				return err
+			}
+
+			sourceNodeOffline = sourceMemberInfo.IsOffline(offlineThreshold)
 
 			return nil
 		})
@@ -1520,7 +1525,12 @@ func storagePoolVolumePost(d *Daemon, r *http.Request) response.Response {
 			return response.SmartError(err)
 		}
 
-		if targetMemberInfo.IsOffline(s.GlobalConfig.OfflineThreshold()) {
+		offlineThreshold, err := s.GlobalConfig.OfflineThreshold()
+		if err != nil {
+			return response.SmartError(err)
+		}
+
+		if targetMemberInfo.IsOffline(offlineThreshold) {
 			return response.BadRequest(fmt.Errorf("Target cluster member is offline"))
 		}
 
@@ -1703,7 +1713,12 @@ func migrateStorageVolume(s *state.State, r *http.Request, sourceVolumeName stri
 }
 
 func storageVolumePostClusteringMigrate(s *state.State, r *http.Request, srcPool storagePools.Pool, srcProjectName string, srcVolumeName string, newPoolName string, newProjectName string, newVolumeName string, srcMember db.NodeInfo, newMember db.NodeInfo, volumeOnly bool) (func(op *operations.Operation) error, error) {
-	srcMemberOffline := srcMember.IsOffline(s.GlobalConfig.OfflineThreshold())
+	offlineThreshold, err := s.GlobalConfig.OfflineThreshold()
+	if err != nil {
+		return nil, err
+	}
+
+	srcMemberOffline := srcMember.IsOffline(offlineThreshold)
 
 	// Make sure that the source member is online if we end up being called from another member after a
 	// redirection due to the source member being offline.

@@ -56,7 +56,7 @@ func (s Schema) assertKeyType(name string, code Type) error {
 	}
 
 	if key.Type != code {
-		fmt.Errorf("key %q has type code %d, not %d", name, key.Type, code)
+		return fmt.Errorf("key %q has type code %d, not %d", name, key.Type, code)
 	}
 
 	return nil

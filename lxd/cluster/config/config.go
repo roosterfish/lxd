@@ -44,49 +44,94 @@ func Load(ctx context.Context, tx *db.ClusterTx) (*Config, error) {
 }
 
 // BackupsCompressionAlgorithm returns the compression algorithm to use for backups.
-func (c *Config) BackupsCompressionAlgorithm() string {
-	return c.m.GetString("backups.compression_algorithm")
+func (c *Config) BackupsCompressionAlgorithm() (string, error) {
+	s, err := c.m.GetString("backups.compression_algorithm")
+	if err != nil {
+		return "", fmt.Errorf("Cannot get value of backups.compression_algorithm: %w", err)
+	}
+
+	return s, nil
 }
 
 // MetricsAuthentication checks whether metrics API requires authentication.
-func (c *Config) MetricsAuthentication() bool {
-	return c.m.GetBool("core.metrics_authentication")
+func (c *Config) MetricsAuthentication() (bool, error) {
+	b, err := c.m.GetBool("core.metrics_authentication")
+	if err != nil {
+		return false, fmt.Errorf("Cannot get value of core.metrics_authentication: %w", err)
+	}
+
+	return b, nil
 }
 
 // BGPASN returns the BGP ASN setting.
-func (c *Config) BGPASN() int64 {
-	return c.m.GetInt64("core.bgp_asn")
+func (c *Config) BGPASN() (int64, error) {
+	asn, err := c.m.GetInt64("core.bgp_asn")
+	if err != nil {
+		return 0, fmt.Errorf("Cannot get value of core.bgp_asn: %w", err)
+	}
+
+	return asn, nil
 }
 
 // HTTPSAllowedHeaders returns the relevant CORS setting.
-func (c *Config) HTTPSAllowedHeaders() string {
-	return c.m.GetString("core.https_allowed_headers")
+func (c *Config) HTTPSAllowedHeaders() (string, error) {
+	s, err := c.m.GetString("core.https_allowed_headers")
+	if err != nil {
+		return "", fmt.Errorf("Cannot get value of core.https_allowed_headers: %w", err)
+	}
+
+	return s, nil
 }
 
 // HTTPSAllowedMethods returns the relevant CORS setting.
-func (c *Config) HTTPSAllowedMethods() string {
-	return c.m.GetString("core.https_allowed_methods")
+func (c *Config) HTTPSAllowedMethods() (string, error) {
+	s, err := c.m.GetString("core.https_allowed_methods")
+	if err != nil {
+		return "", fmt.Errorf("Cannot get value of core.https_allowed_methods: %w", err)
+	}
+
+	return s, nil
 }
 
 // HTTPSAllowedOrigin returns the relevant CORS setting.
-func (c *Config) HTTPSAllowedOrigin() string {
-	return c.m.GetString("core.https_allowed_origin")
+func (c *Config) HTTPSAllowedOrigin() (string, error) {
+	s, err := c.m.GetString("core.https_allowed_origin")
+	if err != nil {
+		return "", fmt.Errorf("Cannot get value of core.https_allowed_origin: %w", err)
+	}
+
+	return s, nil
 }
 
 // HTTPSAllowedCredentials returns the relevant CORS setting.
-func (c *Config) HTTPSAllowedCredentials() bool {
-	return c.m.GetBool("core.https_allowed_credentials")
+func (c *Config) HTTPSAllowedCredentials() (bool, error) {
+	b, err := c.m.GetBool("core.https_allowed_credentials")
+	if err != nil {
+		return false, fmt.Errorf("Cannot get value of core.https_allowed_credentials: %w", err)
+	}
+
+	return b, nil
 }
 
 // TrustPassword returns the LXD trust password for authenticating clients.
-func (c *Config) TrustPassword() string {
-	return c.m.GetString("core.trust_password")
+func (c *Config) TrustPassword() (string, error) {
+	s, err := c.m.GetString("core.trust_password")
+	if err != nil {
+		return "", fmt.Errorf("Cannot get value of core.trust_password: %w", err)
+	}
+
+	return s, nil
 }
 
 // TrustCACertificates returns whether client certificates are checked
 // against a CA.
-func (c *Config) TrustCACertificates() bool {
-	return c.m.GetBool("core.trust_ca_certificates")
+func (c *Config) TrustCACertificates() (bool, error) {
+	b, err := c.m.GetBool("core.trust_ca_certificates")
+	if err != nil {
+		return false, fmt.Errorf("Cannot get value of core.https_allowed_credentials: %w", err)
+	}
+
+	return b, nil
 }
 
 // ProxyHTTPS returns the configured HTTPS proxy, if any.
@@ -119,31 +164,54 @@ func (c *Config) MAASController() (apiURL string, apiKey string) {
 // OfflineThreshold returns the configured heartbeat threshold, i.e. the
 // number of seconds before after which an unresponsive node is considered
 // offline..
-func (c *Config) OfflineThreshold() time.Duration {
-	n := c.m.GetInt64("cluster.offline_threshold")
-	return time.Duration(n) * time.Second
+func (c *Config) OfflineThreshold() (time.Duration, error) {
+	n, err := c.m.GetInt64("cluster.offline_threshold")
+	if err != nil {
+		return 0, fmt.Errorf("Cannot get value of cluster.offline_threshold: %w", err)
+	}
+	return time.Duration(n) * time.Second, nil
 }
 
 // ImagesMinimalReplica returns the numbers of nodes for cluster images replication.
-func (c *Config) ImagesMinimalReplica() int64 {
-	return c.m.GetInt64("cluster.images_minimal_replica")
+func (c *Config) ImagesMinimalReplica() (int64, error) {
+	n, err := c.m.GetInt64("cluster.images_minimal_replica")
+	if err != nil {
+		return 0, fmt.Errorf("Cannot get value of cluster.images_minimal_replica: %w", err)
+	}
+
+	return n, nil
 }
 
 // MaxVoters returns the maximum number of members in a cluster that will be
 // assigned the voter role.
-func (c *Config) MaxVoters() int64 {
-	return c.m.GetInt64("cluster.max_voters")
+func (c *Config) MaxVoters() (int64, error) {
+	n, err := c.m.GetInt64("cluster.max_voters")
+	if err != nil {
+		return 0, fmt.Errorf("Cannot get value of cluster.max_voters: %w", err)
+	}
+
+	return n, nil
 }
 
 // MaxStandBy returns the maximum number of standby members in a cluster that
 // will be assigned the stand-by role.
-func (c *Config) MaxStandBy() int64 {
-	return c.m.GetInt64("cluster.max_standby")
+func (c *Config) MaxStandBy() (int64, error) {
+	n, err := c.m.GetInt64("cluster.max_standby")
+	if err != nil {
+		return 0, fmt.Errorf("Cannot get value of cluster.max_standby: %w", err)
+	}
+
+	return n, nil
 }
 
 // NetworkOVNIntegrationBridge returns the integration OVS bridge to use for OVN networks.
-func (c *Config) NetworkOVNIntegrationBridge() string {
-	return c.m.GetString("network.ovn.integration_bridge")
+func (c *Config) NetworkOVNIntegrationBridge() (string, error) {
+	s, err := c.m.GetString("network.ovn.integration_bridge")
+	if err != nil {
+		return "", fmt.Errorf("Cannot get value of cnetwork.ovn.integration_bridge: %w", err)
+	}
+
+	return s, nil
 }
 
 // NetworkOVNNorthboundConnection returns the OVN northbound database connection string for OVN networks.
@@ -158,9 +226,13 @@ func (c *Config) NetworkOVNSSL() (caCert string, clientCert string, clientKey st
 
 // ShutdownTimeout returns the number of minutes to wait for running operation to complete
 // before LXD server shut down.
-func (c *Config) ShutdownTimeout() time.Duration {
-	n := c.m.GetInt64("core.shutdown_timeout")
-	return time.Duration(n) * time.Minute
+func (c *Config) ShutdownTimeout() (time.Duration, error) {
+	n, err := c.m.GetInt64("core.shutdown_timeout")
+	if err != nil {
+		return 0, fmt.Errorf("Cannot get value of core.shutdown_timeout: %w", err)
+	}
+
+	return time.Duration(n) * time.Minute, nil
 }
 
 // ImagesDefaultArchitecture returns the default architecture.
@@ -179,13 +251,23 @@ func (c *Config) ImagesAutoUpdateCached() bool {
 }
 
 // ImagesAutoUpdateIntervalHours returns interval in hours at which to look for update to cached images.
-func (c *Config) ImagesAutoUpdateIntervalHours() int64 {
-	return c.m.GetInt64("images.auto_update_interval")
+func (c *Config) ImagesAutoUpdateIntervalHours() (int64, error) {
+	i, err := c.m.GetInt64("images.auto_update_interval")
+	if err != nil {
+		return 0, fmt.Errorf("Cannot get value of images.auto_update_interval: %w", err)
+	}
+
+	return i, nil
 }
 
 // ImagesRemoteCacheExpiryDays returns the number of days after which an unused cached remote image will be flushed.
-func (c *Config) ImagesRemoteCacheExpiryDays() int64 {
-	return c.m.GetInt64("images.remote_cache_expiry")
+func (c *Config) ImagesRemoteCacheExpiryDays() (int64, error) {
+	n, err := c.m.GetInt64("images.remote_cache_expiry")
+	if err != nil {
+		return 0, fmt.Errorf("Cannot get value of images.remote_cache_expiry: %w", err)
+	}
+
+	return n, nil
 }
 
 // InstancesNICHostname returns hostname mode to use for instance NICs.
@@ -240,20 +322,27 @@ func (c *Config) OIDCServer() (issuer string, clientID string, audience string, 
 // number of seconds after which an offline node will be evacuated automatically. If the config key
 // is set but its value is lower than cluster.offline_threshold it returns
 // the value of cluster.offline_threshold instead. If this feature is disabled, it returns 0.
-func (c *Config) ClusterHealingThreshold() time.Duration {
-	n := c.m.GetInt64("cluster.healing_threshold")
+func (c *Config) ClusterHealingThreshold() (time.Duration, error) {
+	n, err := c.m.GetInt64("cluster.healing_threshold")
+	if err != nil {
+		return 0, fmt.Errorf("Cannot get value of cluster.healing_threshold: %w", err)
+	}
+
 	if n == 0 {
-		return 0
+		return 0, nil
 	}
 
 	healingThreshold := time.Duration(n) * time.Second
-	offlineThreshold := c.OfflineThreshold()
-
-	if healingThreshold < offlineThreshold {
-		return offlineThreshold
+	offlineThreshold, err := c.OfflineThreshold()
+	if err != nil {
+		return 0, err
 	}
 
-	return healingThreshold
+	if healingThreshold < offlineThreshold {
+		return offlineThreshold, nil
+	}
+
+	return healingThreshold, nil
 }
 
 // Dump current configuration keys and their values. Keys with values matching

@@ -1091,7 +1091,12 @@ func instancesPost(d *Daemon, r *http.Request) response.Response {
 
 			clusterGroupsAllowed := project.GetRestrictedClusterGroups(targetProject)
 
-			candidateMembers, err = tx.GetCandidateMembers(ctx, allMembers, architectures, targetGroupName, clusterGroupsAllowed, s.GlobalConfig.OfflineThreshold())
+			offlineThreshold, err := s.GlobalConfig.OfflineThreshold()
+			if err != nil {
+				return err
+			}
+
+			candidateMembers, err = tx.GetCandidateMembers(ctx, allMembers, architectures, targetGroupName, clusterGroupsAllowed, offlineThreshold)
 			if err != nil {
 				return err
 			}

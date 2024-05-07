@@ -1412,12 +1412,19 @@ func (d *Daemon) init() error {
 
 	// Get specific config keys.
 	d.globalConfigMu.Lock()
-	bgpASN = d.globalConfig.BGPASN()
+	bgpASN, err = d.globalConfig.BGPASN()
+	if err != nil {
+		return err
+	}
 
 	d.proxy = shared.ProxyFromConfig(d.globalConfig.ProxyHTTPS(), d.globalConfig.ProxyHTTP(), d.globalConfig.ProxyIgnoreHosts())
 
 	maasAPIURL, maasAPIKey = d.globalConfig.MAASController()
-	d.gateway.HeartbeatOfflineThreshold = d.globalConfig.OfflineThreshold()
+	d.gateway.HeartbeatOfflineThreshold, err = d.globalConfig.OfflineThreshold()
+	if err != nil {
+		return err
+	}
+
 	lokiURL, lokiUsername, lokiPassword, lokiCACert, lokiInstance, lokiLoglevel, lokiLabels, lokiTypes := d.globalConfig.LokiServer()
 	oidcIssuer, oidcClientID, oidcAudience, oidcGroupsClaim := d.globalConfig.OIDCServer()
 	syslogSocketEnabled := d.localConfig.SyslogSocket()
@@ -1813,10 +1820,15 @@ func (d *Daemon) Stop(ctx context.Context, sig os.Signal) error {
 	// Handle shutdown (unix.SIGPWR) and reload (unix.SIGTERM) signals.
 	if sig == unix.SIGPWR || sig == unix.SIGTERM {
 		if d.db.Cluster != nil {
+			shutdownTimeout, err := s.GlobalConfig.ShutdownTimeout()
+			if err != nil {
+				return err
+			}
+
 			// waitForOperations will block until all operations are done, or it's forced to shut down.
 			// For the latter case, we re-use the shutdown channel which is filled when a shutdown is
 			// initiated using `lxd shutdown`.
-			waitForOperations(ctx, d.db.Cluster, s.GlobalConfig.ShutdownTimeout())
+			waitForOperations(ctx, d.db.Cluster, shutdownTimeout)
 		}
 
 		// Unmount daemon image and backup volumes if set.
@@ -2245,8 +2257,16 @@ func (d *Daemon) nodeRefreshTask(heartbeatData *cluster.APIHeartbeat, isLeader b
 			}
 		}
 
-		maxVoters := s.GlobalConfig.MaxVoters()
-		maxStandBy := s.GlobalConfig.MaxStandBy()
+		maxVoters, err := s.GlobalConfig.MaxVoters()
+		if err != nil {
+			logger.Error("Error getting maximum number of voter members", logger.Ctx{"err": err})
+			return
+		}
+
+		maxStandBy, err := s.GlobalConfig.MaxStandBy()
+		if err != nil {
+			logger.Error("Error getting maximum number of standby members", logger.Ctx{"err": err})
+		}
 
 		// If there are offline members that have voter or stand-by database roles, let's see if we can
 		// replace them with spare ones. Also, if we don't have enough voters or standbys, let's see if we

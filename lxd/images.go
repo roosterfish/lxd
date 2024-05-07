@@ -2108,7 +2108,10 @@ func autoUpdateImage(ctx context.Context, s *state.State, op *operations.Operati
 				return nil, fmt.Errorf("Unable to fetch project configuration: %w", err)
 			}
 		} else {
-			interval = s.GlobalConfig.ImagesAutoUpdateIntervalHours()
+			interval, err = s.GlobalConfig.ImagesAutoUpdateIntervalHours()
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		// Check if we're supposed to auto update at all (0 disables it)
@@ -2464,7 +2467,10 @@ func pruneExpiredImages(ctx context.Context, s *state.State, op *operations.Oper
 
 	err = s.DB.Cluster.Transaction(ctx, func(ctx context.Context, tx *db.ClusterTx) error {
 		// Get an image remote cache expiry days value for each project and store keyed on project name.
-		globalImageRemoteCacheExpiryDays := s.GlobalConfig.ImagesRemoteCacheExpiryDays()
+		globalImageRemoteCacheExpiryDays, err := s.GlobalConfig.ImagesRemoteCacheExpiryDays()
+		if err != nil {
+			return err
+		}
 
 		dbProjects, err := dbCluster.GetProjects(ctx, tx.Tx())
 		if err != nil {
@@ -4574,7 +4580,10 @@ func imageSyncBetweenNodes(ctx context.Context, s *state.State, r *http.Request,
 	var syncNodeAddresses []string
 
 	err := s.DB.Cluster.Transaction(ctx, func(ctx context.Context, tx *db.ClusterTx) error {
-		desiredSyncNodeCount = s.GlobalConfig.ImagesMinimalReplica()
+		desiredSyncNodeCount, err := s.GlobalConfig.ImagesMinimalReplica()
+		if err != nil {
+			return err
+		}
 
 		// -1 means that we want to replicate the image on all nodes
 		if desiredSyncNodeCount == -1 {
@@ -4585,8 +4594,6 @@ func imageSyncBetweenNodes(ctx context.Context, s *state.State, r *http.Request,
 
 			desiredSyncNodeCount = int64(nodesCount)
 		}
-
-		var err error
 
 		// Check how many nodes already have this image
 		syncNodeAddresses, err = tx.GetNodesWithImage(ctx, fingerprint)

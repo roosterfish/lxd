@@ -822,7 +822,12 @@ func doAPI10UpdateTriggers(d *Daemon, nodeChanged, clusterChanged map[string]str
 			}
 
 		case "cluster.offline_threshold":
-			d.gateway.HeartbeatOfflineThreshold = clusterConfig.OfflineThreshold()
+			offlineThreshold, err := clusterConfig.OfflineThreshold()
+			if err != nil {
+				return err
+			}
+
+			d.gateway.HeartbeatOfflineThreshold = offlineThreshold
 			d.taskClusterHeartbeat.Reset()
 		case "images.auto_update_interval":
 			fallthrough
@@ -949,10 +954,13 @@ func doAPI10UpdateTriggers(d *Daemon, nodeChanged, clusterChanged map[string]str
 
 	if bgpChanged {
 		address := nodeConfig.BGPAddress()
-		asn := clusterConfig.BGPASN()
+		asn, err := clusterConfig.BGPASN()
+		if err != nil {
+			return err
+		}
 		routerid := nodeConfig.BGPRouterID()
 
-		err := s.BGP.Reconfigure(address, uint32(asn), net.ParseIP(routerid))
+		err = s.BGP.Reconfigure(address, uint32(asn), net.ParseIP(routerid))
 		if err != nil {
 			return fmt.Errorf("Failed reconfiguring BGP: %w", err)
 		}

@@ -21,7 +21,10 @@ func TestConfigLoad_Initial(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, map[string]string{}, config.Dump())
 
-	assert.Equal(t, float64(20), config.OfflineThreshold().Seconds())
+	threshold, err := config.OfflineThreshold()
+	assert.Nil(t, err)
+
+	assert.Equal(t, float64(20), threshold.Seconds())
 }
 
 // If the database contains invalid keys, they are ignored.

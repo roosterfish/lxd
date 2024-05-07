@@ -1217,11 +1217,16 @@ func clusterNodesGet(d *Daemon, r *http.Request) response.Response {
 			return fmt.Errorf("Failed getting max member version: %w", err)
 		}
 
+		offlineThreshold, err := s.GlobalConfig.OfflineThreshold()
+		if err != nil {
+			return err
+		}
+
 		args := db.NodeInfoArgs{
 			LeaderAddress:        leaderAddress,
 			FailureDomains:       failureDomains,
 			MemberFailureDomains: memberFailureDomains,
-			OfflineThreshold:     s.GlobalConfig.OfflineThreshold(),
+			OfflineThreshold:     offlineThreshold,
 			MaxMemberVersion:     maxVersion,
 			RaftNodes:            raftNodes,
 		}
@@ -1319,9 +1324,14 @@ func clusterNodesPost(d *Daemon, r *http.Request) response.Response {
 			return fmt.Errorf("Failed getting cluster members: %w", err)
 		}
 
+		offlineThreshold, err := s.GlobalConfig.OfflineThreshold()
+		if err != nil {
+			return err
+		}
+
 		// Filter to online members.
 		for _, member := range members {
-			if member.State == db.ClusterMemberStateEvacuated || member.IsOffline(s.GlobalConfig.OfflineThreshold()) {
+			if member.State == db.ClusterMemberStateEvacuated || member.IsOffline(offlineThreshold) {
 				continue
 			}
 
@@ -1489,11 +1499,16 @@ func clusterNodeGet(d *Daemon, r *http.Request) response.Response {
 			return fmt.Errorf("Failed getting max member version: %w", err)
 		}
 
+		offlineThreshold, err := s.GlobalConfig.OfflineThreshold()
+		if err != nil {
+			return err
+		}
+
 		args := db.NodeInfoArgs{
 			LeaderAddress:        leaderAddress,
 			FailureDomains:       failureDomains,
 			MemberFailureDomains: memberFailureDomains,
-			OfflineThreshold:     s.GlobalConfig.OfflineThreshold(),
+			OfflineThreshold:     offlineThreshold,
 			MaxMemberVersion:     maxVersion,
 			RaftNodes:            raftNodes,
 		}
@@ -1626,11 +1641,16 @@ func updateClusterNode(s *state.State, gateway *cluster.Gateway, r *http.Request
 			return fmt.Errorf("Failed getting max member version: %w", err)
 		}
 
+		offlineThreshold, err := s.GlobalConfig.OfflineThreshold()
+		if err != nil {
+			return err
+		}
+
 		args := db.NodeInfoArgs{
 			LeaderAddress:        leaderAddress,
 			FailureDomains:       failureDomains,
 			MemberFailureDomains: memberFailureDomains,
-			OfflineThreshold:     s.GlobalConfig.OfflineThreshold(),
+			OfflineThreshold:     offlineThreshold,
 			MaxMemberVersion:     maxVersion,
 			RaftNodes:            raftNodes,
 		}
@@ -3298,7 +3318,12 @@ func evacuateInstances(ctx context.Context, opts evacuateOpts) error {
 				return fmt.Errorf("Failed getting cluster members: %w", err)
 			}
 
-			candidateMembers, err = tx.GetCandidateMembers(ctx, allMembers, []int{inst.Architecture()}, "", nil, opts.s.GlobalConfig.OfflineThreshold())
+			offlineThreshold, err := opts.s.GlobalConfig.OfflineThreshold()
+			if err != nil {
+				return err
+			}
+
+			candidateMembers, err = tx.GetCandidateMembers(ctx, allMembers, []int{inst.Architecture()}, "", nil, offlineThreshold)
 			if err != nil {
 				return err
 			}
@@ -4387,7 +4412,12 @@ func evacuateClusterSelectTarget(ctx context.Context, s *state.State, gateway *c
 func autoHealClusterTask(d *Daemon) (task.Func, task.Schedule) {
 	f := func(ctx context.Context) {
 		s := d.State()
-		healingThreshold := s.GlobalConfig.ClusterHealingThreshold()
+		healingThreshold, err := s.GlobalConfig.ClusterHealingThreshold()
+		if err != nil {
+			logger.Error("Failed to get cluster healing threshold", logger.Ctx{"err": err})
+			return
+		}
+
 		if healingThreshold == 0 {
 			return // Skip healing if it's disabled.
 		}
