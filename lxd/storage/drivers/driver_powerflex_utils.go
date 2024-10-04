@@ -108,8 +108,16 @@ type powerFlexStoragePool struct {
 
 // powerFlexStoragePoolStatistics represents the statistics of a storage pool in PowerFlex.
 type powerFlexStoragePoolStatistics struct {
-	MaxCapacityInKb   uint64 `json:"maxCapacityInKb"`
+	// Sum of raw storage capacity across all physical storage devices.
+	// Use NetUnusedCapacityInKb instead.
+	MaxCapacityInKb uint64 `json:"maxCapacityInKb"`
+	// Actual usable storage capacity.
+	NetUnusedCapacityInKb uint64 `json:"netUnusedCapacityInKb"`
+	// Sum of raw used capacity.
+	// Use NetCapacityInUseInKb instead.
 	CapacityInUseInKb uint64 `json:"capacityInUseInKb"`
+	// Actual used storage capacity.
+	NetCapacityInUseInKb uint64 `json:"netCapacityInUseInKb"`
 }
 
 // powerFlexProtectionDomain represents a protection domain in PowerFlex.
