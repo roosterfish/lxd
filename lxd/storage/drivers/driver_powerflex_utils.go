@@ -256,11 +256,28 @@ func (p *powerFlexClient) request(method string, path string, token string, body
 
 // requestAuthenticated issues an authenticated HTTP request against the PowerFlex gateway.
 func (p *powerFlexClient) requestAuthenticated(method string, path string, body io.Reader, response any) error {
+	var err error
+	var bodyCopy []byte
+
+	// Create a copy of the request body to allow retry of the request.
+	// The reader provided for the request's body will be read after the first request.
+	if body != nil {
+		bodyCopy, err = io.ReadAll(body)
+		if err != nil {
+			return fmt.Errorf("Failed to copy request body: %w", err)
+		}
+	}
+
 	retries := 0
 	for {
 		token, err := p.login()
 		if err != nil {
 			return err
+		}
+
+		// Create another reader from the copied body if not nil.
+		if bodyCopy != nil {
+			body = io.NopCloser(bytes.NewBuffer(bodyCopy))
 		}
 
 		err = p.request(method, path, token, body, response)
