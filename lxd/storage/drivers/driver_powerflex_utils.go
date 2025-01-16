@@ -915,6 +915,29 @@ func (d *powerflex) mapVolume(vol Volume) (revert.Hook, error) {
 		reverter.Add(func() { _ = client.deleteHostVolumeMapping(hostID, volumeID) })
 	}
 
+	pool, err := d.resolvePool()
+	if err != nil {
+		return nil, err
+	}
+
+	domain, err := d.client().getProtectionDomain(pool.ProtectionDomainID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Try to find an existing session.
+	targetNQN, err := d.connector().SessionID(domain.SystemID)
+	if err != nil {
+		return nil, err
+	}
+
+	if targetNQN != "" {
+		// Already connected.
+		cleanup := reverter.Clone().Fail
+		reverter.Success()
+		return cleanup, nil
+	}
+
 	targetAddr := d.config["powerflex.sdt"]
 
 	// Connect to the storage subsystem.
