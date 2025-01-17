@@ -600,6 +600,13 @@ func (d *powerflex) SetVolumeQuota(vol Volume, size string, allowUnsafeResize bo
 				return err
 			}
 
+			// Ensure the block device size is correctly reflected on the attached volume
+			// before growing the file system.
+			err = block.WaitDiskSizeBytes(d.state.ShutdownCtx, devPath, sizeBytes)
+			if err != nil {
+				return fmt.Errorf("Disk device did not resize to the expected size: %w", err)
+			}
+
 			// Grow the filesystem to fill block device.
 			err = growFileSystem(fsType, devPath, vol)
 			if err != nil {
@@ -625,6 +632,14 @@ func (d *powerflex) SetVolumeQuota(vol Volume, size string, allowUnsafeResize bo
 		// Move the VM GPT alt header to end of disk if needed (not needed in unsafe resize mode as it is
 		// expected the caller will do all necessary post resize actions themselves).
 		if vol.IsVMBlock() && !allowUnsafeResize {
+			// The resize happens on PowerFlex, but it is not immediately reflected
+			// on the host system, which may result in GPT table not being moved to
+			// an actual end. Therefore, wait for the resize to complete.
+			err = block.WaitDiskSizeBytes(d.state.ShutdownCtx, devPath, sizeBytes)
+			if err != nil {
+				return fmt.Errorf("Disk device did not resize to the expected size: %w", err)
+			}
+
 			err = d.moveGPTAltHeader(devPath)
 			if err != nil {
 				return err
