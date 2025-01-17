@@ -1,7 +1,10 @@
 package block
 
 import (
+	"context"
+	"fmt"
 	"os"
+	"time"
 
 	"golang.org/x/sys/unix"
 
@@ -55,4 +58,29 @@ func DiskBlockSize(path string) (uint32, error) {
 	}
 
 	return res, nil
+}
+
+// WaitDiskSizeBytes waits until the block disk is resized to the expected size in bytes.
+func WaitDiskSizeBytes(ctx context.Context, blockDiskPath string, newSizeBytes int64) error {
+	// Set upper boundary for the timeout to ensure this function does not run
+	// indefinitely. The caller can set a shorter timeout if necessary.
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	for {
+		sizeBytes, err := DiskSizeBytes(blockDiskPath)
+		if err != nil {
+			return fmt.Errorf("Error getting disk size: %w", err)
+		}
+
+		if sizeBytes == newSizeBytes {
+			return nil
+		}
+
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		time.Sleep(500 * time.Millisecond)
+	}
 }
