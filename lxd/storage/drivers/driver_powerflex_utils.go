@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dell/goscaleio"
@@ -158,8 +159,9 @@ type powerFlexVolume struct {
 
 // powerFlexClient holds the PowerFlex HTTP client and an access token factory.
 type powerFlexClient struct {
-	driver *powerflex
-	token  string
+	driver    *powerflex
+	token     string
+	tokenLock sync.Mutex
 }
 
 // newPowerFlexClient creates a new instance of the HTTP PowerFlex client.
@@ -182,7 +184,7 @@ func (p *powerFlexClient) createBodyReader(contents map[string]any) (io.Reader, 
 }
 
 // request issues a HTTP request against the PowerFlex gateway.
-func (p *powerFlexClient) request(method string, path string, body io.Reader, response any) error {
+func (p *powerFlexClient) request(method string, path string, token string, body io.Reader, response any) error {
 	url := fmt.Sprintf("%s%s", p.driver.config["powerflex.gateway"], path)
 	req, err := http.NewRequest(method, url, body)
 	if err != nil {
@@ -194,8 +196,8 @@ func (p *powerFlexClient) request(method string, path string, body io.Reader, re
 		req.Header.Add("Content-Type", "application/json")
 	}
 
-	if p.token != "" {
-		req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", p.token))
+	if token != "" {
+		req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", token))
 	}
 
 	client := &http.Client{
@@ -245,19 +247,38 @@ func (p *powerFlexClient) request(method string, path string, body io.Reader, re
 
 // requestAuthenticated issues an authenticated HTTP request against the PowerFlex gateway.
 func (p *powerFlexClient) requestAuthenticated(method string, path string, body io.Reader, response any) error {
+	var err error
+	var bodyCopy []byte
+
+	// Create a copy of the request body to allow retry of the request.
+	// The reader provided for the request's body will be read after the first request.
+	if body != nil {
+		bodyCopy, err = io.ReadAll(body)
+		if err != nil {
+			return fmt.Errorf("Failed to copy request body: %w", err)
+		}
+	}
+
 	retries := 0
 	for {
-		err := p.login()
+		token, err := p.login()
 		if err != nil {
 			return err
 		}
 
-		err = p.request(method, path, body, response)
+		// Create another reader from the copied body if not nil.
+		if bodyCopy != nil {
+			body = io.NopCloser(bytes.NewBuffer(bodyCopy))
+		}
+
+		err = p.request(method, path, token, body, response)
 		if err != nil {
 			if api.StatusErrorCheck(err, http.StatusUnauthorized) && retries == 0 {
 				// Access token seems to be expired.
 				// Reset the token and try one more time.
+				p.tokenLock.Lock()
 				p.token = ""
+				p.tokenLock.Unlock()
 				retries++
 				continue
 			}
@@ -271,30 +292,34 @@ func (p *powerFlexClient) requestAuthenticated(method string, path string, body 
 }
 
 // login creates a new access token and authenticates the client.
-func (p *powerFlexClient) login() error {
-	if p.token != "" {
-		return nil
+func (p *powerFlexClient) login() (string, error) {
+	p.tokenLock.Lock()
+	defer p.tokenLock.Unlock()
+
+	// Create a new token.
+	if p.token == "" {
+		body, err := p.createBodyReader(map[string]any{
+			"username": p.driver.config["powerflex.user.name"],
+			"password": p.driver.config["powerflex.user.password"],
+		})
+		if err != nil {
+			return "", err
+		}
+
+		var actualResponse struct {
+			AccessToken string `json:"access_token"`
+		}
+
+		err = p.request(http.MethodPost, "/rest/auth/login", "", body, &actualResponse)
+		if err != nil {
+			return "", fmt.Errorf("Failed to login: %w", err)
+		}
+
+		// Save the new token for later use.
+		p.token = actualResponse.AccessToken
 	}
 
-	body, err := p.createBodyReader(map[string]any{
-		"username": p.driver.config["powerflex.user.name"],
-		"password": p.driver.config["powerflex.user.password"],
-	})
-	if err != nil {
-		return err
-	}
-
-	var actualResponse struct {
-		AccessToken string `json:"access_token"`
-	}
-
-	err = p.request(http.MethodPost, "/rest/auth/login", body, &actualResponse)
-	if err != nil {
-		return fmt.Errorf("Failed to login: %w", err)
-	}
-
-	p.token = actualResponse.AccessToken
-	return nil
+	return p.token, nil
 }
 
 // getStoragePool returns the storage pool behind poolID.
