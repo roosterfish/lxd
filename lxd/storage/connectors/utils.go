@@ -6,12 +6,16 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sys/unix"
 
+	"github.com/canonical/lxd/lxd/locking"
 	"github.com/canonical/lxd/lxd/resources"
 	"github.com/canonical/lxd/shared"
+	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/lxd/shared/revert"
 )
 
 // devicePathFilterFunc is a function that accepts device path and returns true
@@ -125,4 +129,121 @@ func WaitDiskDeviceGone(ctx context.Context, diskPath string) bool {
 
 		time.Sleep(500 * time.Millisecond)
 	}
+}
+
+type connectFunc func(ctx context.Context, s *session, addr string) error
+
+// connect attempts to establish connections to all provided addresses,
+// succeeding if at least one connection is successful.
+//
+// It first checks for an existing session associated with the targetQN. If no
+// session is found, "connectFunc" attempts to establish connections to all
+// addresses. If a session exists, "connectFunc" is responsible for handling it
+// appropriately; either by skipping connections to already connected addresses
+// or by performing any necessary actions for established connections (such as
+// running rescan to detect new volumes in case of iSCSI).
+//
+// Once a single connection is successfully established, the function returns
+// immediately, while other connection attempts continue in the background. In
+// case of an error, the function reverts any changes or returns a reverter to
+// handle cleanup of established connections. Connections are reverted only if
+// no existing session was found. Reverting connections when an active session
+// exists would disconnect all volumes associated with the targetQN, potentially
+// impacting other storage pools and volumes.
+func connect(ctx context.Context, c Connector, targetQN string, targetAddrs []string, connectFunc connectFunc) (revert.Hook, error) {
+	revert := revert.New()
+	defer revert.Fail()
+
+	// Acquire a lock to prevent concurrent connection attempts to the same
+	// target.
+	//
+	// The lock is not deferred here because it must remain held until all
+	// connection attempts are complete. Releasing the lock prematurely after
+	// the first successful connection (when this function exits) could lead
+	// to race conditions if other connection attempts are still ongoing.
+	// For the same reason, relying on a higher-level lock from the caller
+	// (e.g., the storage driver) is insufficient.
+	unlock, err := locking.Lock(ctx, targetQN)
+	if err != nil {
+		return nil, err
+	}
+
+	// Once the lock is obtained, search for an existing session.
+	session, err := c.findSession(targetQN)
+	if err != nil {
+		return nil, err
+	}
+
+	// Set a maximum timeout of 30 seconds for connection attempts.
+	// The caller can override this with a shorter timeout if needed.
+	//
+	// Context cancellation is not deferred here to ensure connection attempts
+	// continue even if the function exits before all attempts are completed.
+	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+
+	var wg sync.WaitGroup
+	doneChan := make(chan bool, len(targetAddrs))
+
+	// Connect to all target addresses.
+	for _, addr := range targetAddrs {
+		wg.Add(1)
+
+		go func(addr string) {
+			defer wg.Done()
+
+			err := connectFunc(timeoutCtx, session, addr)
+			if err != nil {
+				// Log warning for each failed connection attempt.
+				logger.Warn("Failed connecting to target", logger.Ctx{"target_qualified_name": targetQN, "target_address": addr, "err": err})
+			}
+
+			doneChan <- (err == nil)
+		}(addr)
+	}
+
+	// Cleanup routine. Ensures the error channel is closed and connection
+	// lock released once all connection attempts have finished.
+	go func() {
+		wg.Wait()
+		close(doneChan)
+		cancel()
+		unlock()
+	}()
+
+	// Revert successful connections in case of an unexpected error.
+	revert.Add(func() {
+		// Cancel the context to immediately stop all connection attempts.
+		cancel()
+
+		// Wait until all connection attempts have finished.
+		wg.Wait()
+
+		// If no active session was found, ensure all established
+		// connections are closed. Otherwise, keep open connections
+		// intact for other volumes using the session.
+		if session == nil {
+			revert.Add(func() { _ = c.Disconnect(targetQN) })
+		}
+	})
+
+	// Wait until at least one successful connections is established, or
+	// exit if all connections fail.
+	doneConns := 0
+	for {
+		success := <-doneChan
+		if success {
+			// First connection established.
+			break
+		}
+
+		doneConns++
+		if doneConns == len(targetAddrs) {
+			// No successfully established connections.
+			return nil, fmt.Errorf("Failed to connect to any address on target %q", targetQN)
+		}
+	}
+
+	cleanup := revert.Clone().Fail
+	revert.Success()
+	return cleanup, nil
 }
