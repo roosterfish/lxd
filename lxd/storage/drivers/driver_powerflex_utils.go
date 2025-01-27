@@ -104,6 +104,7 @@ type powerFlexStoragePool struct {
 	ID                 string `json:"id"`
 	Name               string `json:"name"`
 	ProtectionDomainID string `json:"protectionDomainId"`
+	ZeroPaddingEnabled bool   `json:"zeroPaddingEnabled"`
 }
 
 // powerFlexStoragePoolStatistics represents the statistics of a storage pool in PowerFlex.
@@ -154,7 +155,9 @@ type powerFlexVolume struct {
 	VolumeType       string `json:"volumeType"`
 	VTreeID          string `json:"vtreeId"`
 	AncestorVolumeID string `json:"ancestorVolumeId"`
-	MappedSDCInfo    []struct {
+	// PowerFlex reports the value in KB but it's actually KiB.
+	SizeInKiB     int64 `json:"sizeInKb"`
+	MappedSDCInfo []struct {
 		SDCID    string `json:"sdcId"`
 		SDCName  string `json:"sdcName"`
 		NQN      string `json:"nqn"`
