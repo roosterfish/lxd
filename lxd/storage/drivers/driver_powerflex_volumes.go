@@ -117,6 +117,17 @@ func (d *powerflex) CreateVolume(vol Volume, filler *VolumeFiller, op *operation
 				allowUnsafeResize = true
 			}
 
+			// The pool isn't configured to use zero padding which might yield non pristine data when reading from the volume.
+			// Discard any blocks on the volume before unpacking the image.
+			if vol.IsVMBlock() && !pool.ZeroPaddingEnabled {
+				err := block.ClearBlock(devPath, 0)
+				if err != nil {
+					return err
+				}
+
+				d.logger.Debug("Cleared PowerFlex volume as the pool has zero-padding disabled", logger.Ctx{"volName": vol.name, "dev": devPath})
+			}
+
 			// Run the filler.
 			err = d.runFiller(vol, devPath, filler, allowUnsafeResize)
 			if err != nil {
@@ -631,9 +642,25 @@ func (d *powerflex) SetVolumeQuota(vol Volume, size string, allowUnsafeResize bo
 
 		defer cleanup()
 
+		pool, err := d.resolvePool()
+		if err != nil {
+			return err
+		}
+
+		// The pool isn't configured to use zero padding which might yield non pristine data when reading from the volume's extended blocks.
+		// Discard blocks from the end of the old volume's size.
+		if !pool.ZeroPaddingEnabled {
+			err := block.ClearBlock(devPath, oldSizeBytes)
+			if err != nil {
+				return err
+			}
+
+			d.logger.Debug("Cleared PowerFlex volume's extended space as the pool has zero-padding disabled", logger.Ctx{"volName": vol.name, "dev": devPath})
+		}
+
 		// Move the VM GPT alt header to end of disk if needed (not needed in unsafe resize mode as it is
 		// expected the caller will do all necessary post resize actions themselves).
-		if vol.IsVMBlock() && !allowUnsafeResize {
+		if !allowUnsafeResize {
 			err = d.moveGPTAltHeader(devPath)
 			if err != nil {
 				return err
