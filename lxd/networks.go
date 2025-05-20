@@ -1654,13 +1654,7 @@ func networkStartup(stateFunc func() *state.State) error {
 	initNetwork := func(s *state.State, n network.Network, priority int) error {
 		err = n.Start()
 		if err != nil {
-			err = fmt.Errorf("Failed starting: %w", err)
-
-			_ = s.DB.Cluster.Transaction(context.Background(), func(ctx context.Context, tx *db.ClusterTx) error {
-				return tx.UpsertWarningLocalNode(ctx, n.Project(), entity.TypeNetwork, int(n.ID()), warningtype.NetworkUnvailable, err.Error())
-			})
-
-			return err
+			return fmt.Errorf("Failed starting: %w", err)
 		}
 
 		logger.Info("Initialized network", logger.Ctx{"project": n.Project(), "name": n.Name()})
@@ -1778,6 +1772,10 @@ func networkStartup(stateFunc func() *state.State) error {
 				err = loadAndInitNetwork(s, n, priority, true)
 				if err != nil {
 					logger.Error("Failed initializing network", logger.Ctx{"project": pn.ProjectName, "network": pn.NetworkName, "err": err})
+
+					_ = s.DB.Cluster.Transaction(context.Background(), func(ctx context.Context, tx *db.ClusterTx) error {
+						return tx.UpsertWarningLocalNode(ctx, n.Project(), entity.TypeNetwork, int(n.ID()), warningtype.NetworkUnvailable, err.Error())
+					})
 
 					continue
 				}
