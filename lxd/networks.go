@@ -1637,6 +1637,19 @@ func networkStartup(stateFunc func() *state.State) error {
 	}
 
 	loadedNetworks := make(map[network.ProjectNetwork]network.Network)
+	loadNetwork := func(s *state.State, pn network.ProjectNetwork) (network.Network, error) {
+		n, ok := loadedNetworks[pn]
+		if !ok {
+			n, err = network.LoadByName(s, pn.ProjectName, pn.NetworkName)
+			if err != nil {
+				return nil, err
+			}
+
+			loadedNetworks[pn] = n
+		}
+
+		return n, nil
+	}
 
 	initNetwork := func(s *state.State, n network.Network, priority int) error {
 		err = n.Start()
