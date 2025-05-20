@@ -15,7 +15,7 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"github.com/canonical/lxd/client"
+	lxd "github.com/canonical/lxd/client"
 	"github.com/canonical/lxd/lxd/auth"
 	"github.com/canonical/lxd/lxd/cluster"
 	clusterRequest "github.com/canonical/lxd/lxd/cluster/request"
@@ -1636,19 +1636,8 @@ func networkStartup(stateFunc func() *state.State) error {
 		networkPriorityLogical:    make(map[network.ProjectNetwork]struct{}),
 	}
 
-	loadedNetworks := make(map[network.ProjectNetwork]network.Network)
 	loadNetwork := func(s *state.State, pn network.ProjectNetwork) (network.Network, error) {
-		n, ok := loadedNetworks[pn]
-		if !ok {
-			n, err = network.LoadByName(s, pn.ProjectName, pn.NetworkName)
-			if err != nil {
-				return nil, err
-			}
-
-			loadedNetworks[pn] = n
-		}
-
-		return n, nil
+		return network.LoadByName(s, pn.ProjectName, pn.NetworkName)
 	}
 
 	initNetwork := func(s *state.State, n network.Network, priority int, firstPass bool) error {
@@ -1767,8 +1756,6 @@ func networkStartup(stateFunc func() *state.State) error {
 				}
 			}
 		}
-
-		loadedNetworks = nil // Don't store loaded networks after first pass.
 	}
 
 	// For any remaining networks that were not successfully initialised, we now start a go routine to
