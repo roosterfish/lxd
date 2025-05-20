@@ -7,11 +7,14 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/canonical/lxd/lxd/util"
 	"github.com/canonical/lxd/shared"
+	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/lxd/shared/revert"
 )
 
@@ -28,6 +31,8 @@ func (c *connectorNVMe) Type() string {
 
 // Version returns the version of the NVMe CLI.
 func (c *connectorNVMe) Version() (string, error) {
+	logger.Debugf("NVMe Version()")
+
 	// Detect and record the version of the NVMe CLI.
 	out, err := shared.RunCommandContext(context.Background(), "nvme", "version")
 	if err != nil {
@@ -45,6 +50,8 @@ func (c *connectorNVMe) Version() (string, error) {
 // LoadModules loads the NVMe/TCP kernel modules.
 // Returns true if the modules can be loaded.
 func (c *connectorNVMe) LoadModules() error {
+	logger.Debugf("NVMe LoadModules()")
+
 	err := util.LoadModule("nvme_fabrics")
 	if err != nil {
 		return err
@@ -60,8 +67,58 @@ func (c *connectorNVMe) QualifiedName() (string, error) {
 	return "nqn.2014-08.org.nvmexpress:uuid:" + c.serverUUID, nil
 }
 
+// Function to extract subnqn from the output of nvme discover.
+func extractUniqueSubNQN(output string) (string, error) {
+	logger.Debugf("NVMe extractUniqueSubNQN()")
+
+	// Use regex to find subnqn entries in the output
+	re := regexp.MustCompile(`subnqn:\s*([^\n]+)`)
+	matches := re.FindAllStringSubmatch(output, -1)
+
+	if len(matches) == 0 {
+		return "", fmt.Errorf("no subnqn found in output")
+	}
+
+	// Assume the first match is the expected consistent subnqn
+	expectedSubnqn := strings.TrimSpace(matches[0][1])
+	for _, match := range matches {
+		if len(match) > 1 {
+			currentSubnqn := strings.TrimSpace(match[1])
+			if currentSubnqn != expectedSubnqn {
+				return "", fmt.Errorf("inconsistent subnqn values found: %s and %s", expectedSubnqn, currentSubnqn)
+			}
+		}
+	}
+
+	return expectedSubnqn, nil
+}
+
+// perform NVMe discovery and extract subnqn.
+func discoverNVMeTCP(ctx context.Context, targetAddr string) (string, error) {
+	logger.Debugf("NVMe discoverNVMeTCP()")
+
+	command := []string{"nvme", "discover", "--transport", "tcp", "--traddr", targetAddr, "-s", "4420"}
+	logger.Debugf("NVMe running command:\n%s", strings.Join(command, " "))
+
+	stdout, err := shared.RunCommandContext(ctx, command[0], command[1:]...)
+	logger.Debugf("NVMe discover output:\n%s", stdout)
+	if err != nil {
+		return "", fmt.Errorf("Failed to discover NVMe/TCP target %s: %w", targetAddr, err)
+	}
+
+	// Extract subnqn from output
+	subnqn, err := extractUniqueSubNQN(stdout)
+	if err != nil {
+		return "", err
+	}
+
+	return subnqn, nil
+}
+
 // Connect establishes a connection with the target on the given address.
 func (c *connectorNVMe) Connect(ctx context.Context, targetQN string, targetAddresses ...string) (revert.Hook, error) {
+	logger.Debugf("NVMe Connect()")
+
 	// Connects to the provided target address, if the connection is not yet established.
 	connectFunc := func(ctx context.Context, session *session, targetAddr string) error {
 		if session != nil && slices.Contains(session.addresses, targetAddr) {
@@ -74,10 +131,41 @@ func (c *connectorNVMe) Connect(ctx context.Context, targetQN string, targetAddr
 			return err
 		}
 
-		_, err = shared.RunCommandContext(ctx, "nvme", "connect", "--transport", "tcp", "--traddr", targetAddr, "--nqn", targetQN, "--hostnqn", hostNQN, "--hostid", c.serverUUID)
+		var waitSeconds = 15
+		logger.Debugf("NVMe coonnect timeout in seconds: %d", waitSeconds)
+		time.Sleep(time.Duration(waitSeconds) * time.Second)
+
+		subnqn, err := discoverNVMeTCP(ctx, targetAddr)
 		if err != nil {
-			return fmt.Errorf("Failed to connect to target %q on %q via NVMe: %w", targetQN, targetAddr, err)
+			return fmt.Errorf("Failed to discover NVMe/TCP target %s: %w", targetAddr, err)
 		}
+		logger.Debugf("NVMe discovered SubNQN: %s", subnqn)
+
+		targetQN = subnqn
+
+		if subnqn != "" && subnqn != targetQN {
+			logger.Debugf("NVMe temp fix! Override hpe.target.nqn %q wit SubNQN %q", targetQN, subnqn)
+			targetQN = subnqn
+		}
+
+		command := []string{"nvme", "connect", "--transport", "tcp", "--traddr", targetAddr, "--nqn", targetQN, "--hostnqn", hostNQN, "--hostid", c.serverUUID, "-s", "4420"}
+		logger.Debugf("NVMe running command:\n%s", strings.Join(command, " "))
+
+		nvmeConnect, err := shared.RunCommandContext(ctx, command[0], command[1:]...)
+		if err != nil {
+			return fmt.Errorf("NVMe failed to connect to target %q on %q via NVMe: %w", targetQN, targetAddr, err)
+		}
+		logger.Debugf("NVMe connect output:\n%s", nvmeConnect)
+
+		var waitSeconds2 = 15
+		logger.Debugf("NVMe DEBUG. Pause! Let's do some extra tests. Timeout in seconds: %d", waitSeconds2)
+		time.Sleep(time.Duration(waitSeconds2) * time.Second)
+
+		nvmeList, err := shared.RunCommandContext(ctx, "nvme", "list")
+		if err != nil {
+			// return fmt.Errorf("NVMe failed to run nvm list: %s", err)
+		}
+		logger.Debugf("NVMe list output:\n%s", nvmeList)
 
 		return nil
 	}
@@ -87,6 +175,8 @@ func (c *connectorNVMe) Connect(ctx context.Context, targetQN string, targetAddr
 
 // Disconnect terminates a connection with the target.
 func (c *connectorNVMe) Disconnect(targetQN string) error {
+	logger.Debugf("NVMe Disconnect()")
+
 	// Find an existing NVMe session.
 	session, err := c.findSession(targetQN)
 	if err != nil {
@@ -125,6 +215,8 @@ func (c *connectorNVMe) Disconnect(targetQN string) error {
 // found the function determines addresses of the active connections by checking
 // "/sys/class/nvme", and returns a non-nil result (except if an error occurs).
 func (c *connectorNVMe) findSession(targetQN string) (*session, error) {
+	logger.Debugf("NVMe findSession()")
+
 	// Base path for NVMe sessions/subsystems.
 	subsysBasePath := "/sys/class/nvme-subsystem"
 

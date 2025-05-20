@@ -15,6 +15,7 @@ var drivers = map[string]func() driver{
 	"powerflex":  func() driver { return &powerflex{} },
 	"pure":       func() driver { return &pure{} },
 	"zfs":        func() driver { return &zfs{} },
+	"hpe":        func() driver { return &hpe{} },
 }
 
 // Validators contains functions used for validating a drivers's config.

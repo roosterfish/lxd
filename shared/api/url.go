@@ -50,6 +50,21 @@ func (u *URL) Path(pathParts ...string) *URL {
 	return u
 }
 
+// RawPath sets the path without URL encoding.
+func (u *URL) UnEncodedPath(pathParts ...string) *URL {
+	var path strings.Builder
+
+	for _, pathPart := range pathParts {
+		path.WriteString("/")      // Build an absolute URL.
+		path.WriteString(pathPart) // No encoding here.
+	}
+
+	u.URL.Path = path.String()
+	u.RawPath = "" // Empty RawPath to ensure no encoding.
+
+	return u
+}
+
 // Project sets the "project" query parameter in the URL if the projectName is not empty or "default".
 func (u *URL) Project(projectName string) *URL {
 	if projectName != "default" && projectName != "" {

@@ -32,6 +32,8 @@ type connectFunc func(ctx context.Context, s *session, addr string) error
 // when safe. The returned reverter will only cancel ongoing connection attempts
 // but will **not** attempt disconnection.
 func connect(ctx context.Context, c Connector, targetQN string, targetAddrs []string, connectFunc connectFunc) (revert.Hook, error) {
+	logger.Debugf("HPE utils connect()")
+
 	reverter := revert.New()
 	defer reverter.Fail()
 
@@ -188,6 +190,10 @@ func connect(ctx context.Context, c Connector, targetQN string, targetAddrs []st
 			return outerReverter.Fail, nil
 		}
 	}
+
+	var waitSeconds = 15
+	logger.Debugf("utils DEBUG. Something is wrong. Pause to verify. Timeout in seconds: %d", waitSeconds)
+	time.Sleep(time.Duration(waitSeconds) * time.Second)
 
 	// All connections attempts have failed.
 	return nil, fmt.Errorf("Failed to connect to any address on target %q", targetQN)
