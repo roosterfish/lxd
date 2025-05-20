@@ -1678,32 +1678,18 @@ func networkStartup(stateFunc func() *state.State) error {
 		return nil
 	}
 
-	loadAndInitNetwork := func(s *state.State, pn network.ProjectNetwork, priority int, firstPass bool) error {
+	loadAndInitNetwork := func(s *state.State, n network.Network, priority int, firstPass bool) error {
 		var err error
-		var n network.Network
-
-		if firstPass && loadedNetworks[pn] != nil {
-			// Check if network already loaded from during first pass phase.
-			n = loadedNetworks[pn]
-		} else {
-			n, err = network.LoadByName(s, pn.ProjectName, pn.NetworkName)
-			if err != nil {
-				if api.StatusErrorCheck(err, http.StatusNotFound) {
-					// Network has been deleted since we began trying to start it so delete
-					// entry.
-					delete(initNetworks[priority], pn)
-
-					return nil
-				}
-
-				return fmt.Errorf("Failed loading: %w", err)
-			}
-		}
 
 		netConfig := n.Config()
 		err = n.Validate(netConfig)
 		if err != nil {
 			return fmt.Errorf("Failed validating: %w", err)
+		}
+
+		pn := network.ProjectNetwork{
+			ProjectName: n.Project(),
+			NetworkName: n.Name(),
 		}
 
 		// Update network start priority based on dependencies.
@@ -1776,7 +1762,20 @@ func networkStartup(stateFunc func() *state.State) error {
 		// Try initializing networks in priority order.
 		for priority := range initNetworks {
 			for pn := range initNetworks[priority] {
-				err := loadAndInitNetwork(s, pn, priority, true)
+				n, err := loadNetwork(s, pn)
+				if err != nil {
+					if api.StatusErrorCheck(err, http.StatusNotFound) {
+						// Network has been deleted since we began trying to start it so delete entry.
+						delete(initNetworks[priority], pn)
+
+						continue
+					}
+
+					// If the network cannot be loaded this can be considered an error in any case.
+					return fmt.Errorf("Failed loading network %q: %w", pn.NetworkName, err)
+				}
+
+				err = loadAndInitNetwork(s, n, priority, true)
 				if err != nil {
 					logger.Error("Failed initializing network", logger.Ctx{"project": pn.ProjectName, "network": pn.NetworkName, "err": err})
 
@@ -1808,7 +1807,20 @@ func networkStartup(stateFunc func() *state.State) error {
 					// Try initializing networks in priority order.
 					for priority := range initNetworks {
 						for pn := range initNetworks[priority] {
-							err := loadAndInitNetwork(s, pn, priority, false)
+							n, err := loadNetwork(s, pn)
+							if err != nil {
+								if api.StatusErrorCheck(err, http.StatusNotFound) {
+									// Network has been deleted since we began trying to start it so delete entry.
+									delete(initNetworks[priority], pn)
+								}
+
+								// If the network cannot be loaded this can be considered an error in any case.
+								// As this is a routine continue with the remaining networks in any case as the error might clear itself out.
+								logger.Error("Failed loading network", logger.Ctx{"project": pn.ProjectName, "network": pn.NetworkName, "err": err})
+								continue
+							}
+
+							err = loadAndInitNetwork(s, n, priority, false)
 							if err != nil {
 								logger.Error("Failed initializing network", logger.Ctx{"project": pn.ProjectName, "network": pn.NetworkName, "err": err})
 
