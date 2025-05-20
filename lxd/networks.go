@@ -1651,28 +1651,7 @@ func networkStartup(stateFunc func() *state.State) error {
 		return n, nil
 	}
 
-	initNetwork := func(s *state.State, n network.Network, priority int) error {
-		err = n.Start()
-		if err != nil {
-			return fmt.Errorf("Failed starting: %w", err)
-		}
-
-		logger.Info("Initialized network", logger.Ctx{"project": n.Project(), "name": n.Name()})
-
-		// Network initialized successfully so remove it from the list so its not retried.
-		pn := network.ProjectNetwork{
-			ProjectName: n.Project(),
-			NetworkName: n.Name(),
-		}
-
-		delete(initNetworks[priority], pn)
-
-		_ = warnings.ResolveWarningsByLocalNodeAndProjectAndTypeAndEntity(s.DB.Cluster, n.Project(), warningtype.NetworkUnvailable, entity.TypeNetwork, int(n.ID()))
-
-		return nil
-	}
-
-	loadAndInitNetwork := func(s *state.State, n network.Network, priority int, firstPass bool) error {
+	initNetwork := func(s *state.State, n network.Network, priority int, firstPass bool) error {
 		var err error
 
 		netConfig := n.Config()
@@ -1703,10 +1682,17 @@ func networkStartup(stateFunc func() *state.State) error {
 			return nil
 		}
 
-		err = initNetwork(s, n, priority)
+		err = n.Start()
 		if err != nil {
-			return err
+			return fmt.Errorf("Failed starting: %w", err)
 		}
+
+		logger.Info("Initialized network", logger.Ctx{"project": n.Project(), "name": n.Name()})
+
+		// Network initialized successfully so remove it from the list so its not retried.
+		delete(initNetworks[priority], pn)
+
+		_ = warnings.ResolveWarningsByLocalNodeAndProjectAndTypeAndEntity(s.DB.Cluster, n.Project(), warningtype.NetworkUnvailable, entity.TypeNetwork, int(n.ID()))
 
 		return nil
 	}
@@ -1769,7 +1755,7 @@ func networkStartup(stateFunc func() *state.State) error {
 					return fmt.Errorf("Failed loading network %q: %w", pn.NetworkName, err)
 				}
 
-				err = loadAndInitNetwork(s, n, priority, true)
+				err = initNetwork(s, n, priority, true)
 				if err != nil {
 					logger.Error("Failed initializing network", logger.Ctx{"project": pn.ProjectName, "network": pn.NetworkName, "err": err})
 
@@ -1818,7 +1804,7 @@ func networkStartup(stateFunc func() *state.State) error {
 								continue
 							}
 
-							err = loadAndInitNetwork(s, n, priority, false)
+							err = initNetwork(s, n, priority, false)
 							if err != nil {
 								logger.Error("Failed initializing network", logger.Ctx{"project": pn.ProjectName, "network": pn.NetworkName, "err": err})
 
