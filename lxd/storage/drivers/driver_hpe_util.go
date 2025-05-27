@@ -168,11 +168,12 @@ type hpeStoragePool struct {
 
 // hpeVolume represents a volume in HPE Storage.
 type hpeVolume struct {
-	ID          string   `json:"id"`
+	ID          int      `json:"id"`
 	Name        string   `json:"name"`
 	Serial      string   `json:"serial"`
 	IsDestroyed bool     `json:"destroyed"`
 	Space       hpeSpace `json:"space"`
+	NGUID       string   `json:"nguid"`
 }
 
 // hpePortPos represents the port position in HPE Storage.
@@ -685,7 +686,7 @@ func (p *hpeClient) deleteStoragePool(poolName string) error {
 func (p *hpeClient) getVolume(poolName string, volName string) (*hpeVolume, error) {
 	logger.Debugf("HPE getVolume()")
 
-	var resp hpeResponse[hpeVolume]
+	var resp hpeVolume
 
 	url := api.NewURL().Path("api", "v1", "volumes", volName)
 	err := p.requestAuthenticated(http.MethodGet, url.URL, nil, &resp)
@@ -698,14 +699,14 @@ func (p *hpeClient) getVolume(poolName string, volName string) (*hpeVolume, erro
 		// return nil, fmt.Errorf("Failed to get volume %q: %w", volName, err)
 		logger.Debugf("HPE volume not found: %s", volName)
 
-		return nil, nil
+		return nil, err
 	}
 
-	if len(resp.Items) == 0 {
-		return nil, api.StatusErrorf(http.StatusNotFound, "Volume %q not found", volName)
-	}
+	// if len(resp.Items) == 0 {
+	// 	return nil, api.StatusErrorf(http.StatusNotFound, "Volume %q not found", volName)
+	// }
 
-	return &resp.Items[0], nil
+	return &resp, nil
 }
 
 // createVolume creates a new volume in the given storage pool. The volume is created with
@@ -1502,9 +1503,11 @@ func (d *hpe) getMappedDevPath(vol Volume, mapVolume bool) (string, revert.Hook,
 	// Ensure the serial number is exactly 24 characters long, as it uniquely
 	// identifies the device. This check should never succeed, but prevents
 	// out-of-bounds errors when slicing the string later.
-	if len(hpeVol.Serial) != 24 {
-		return "", nil, fmt.Errorf("Failed to locate device for volume %q: Unexpected length of serial number %q (%d)", vol.name, hpeVol.Serial, len(hpeVol.Serial))
-	}
+	// if len(hpeVol.Serial) != 24 {
+	// 	return "", nil, fmt.Errorf("Failed to locate device for volume %q: Unexpected length of serial number %q (%d)", vol.name, hpeVol.Serial, len(hpeVol.Serial))
+	// }
+
+	fmt.Println("### done doing getVol", hpeVol)
 
 	var diskPrefix string
 	var diskSuffix string
@@ -1521,7 +1524,8 @@ func (d *hpe) getMappedDevPath(vol Volume, mapVolume bool) (string, revert.Hook,
 		// - "8726b5033af243" - First 14 characters of serial number
 		// - "24a937"         - OUI (Organizationally Unique Identifier)
 		// - "3d00014196"     - Last 10 characters of serial number
-		diskSuffix = "00" + hpeVol.Serial[0:14] + "24a937" + hpeVol.Serial[14:]
+		// diskSuffix = "00" + hpeVol.Serial[0:14] + "24a937" + hpeVol.Serial[14:]
+		diskSuffix = hpeVol.NGUID
 	default:
 		return "", nil, fmt.Errorf("Unsupported HPE Storage mode %q", connector.Type())
 	}
@@ -1530,6 +1534,7 @@ func (d *hpe) getMappedDevPath(vol Volume, mapVolume bool) (string, revert.Hook,
 	// HPE Storage reports serial numbers in uppercase, so the suffix is converted
 	// to lowercase.
 	diskPathFilter := func(devPath string) bool {
+		fmt.Println("### check", devPath, "has suffix", strings.ToLower(diskSuffix))
 		return strings.HasSuffix(devPath, strings.ToLower(diskSuffix))
 	}
 

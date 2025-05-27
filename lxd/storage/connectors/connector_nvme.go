@@ -94,10 +94,10 @@ func extractUniqueSubNQN(output string) (string, error) {
 }
 
 // perform NVMe discovery and extract subnqn.
-func discoverNVMeTCP(ctx context.Context, targetAddr string) (string, error) {
+func discoverNVMeTCP(ctx context.Context, targetAddr string, hostNQN string, hostID string) (string, error) {
 	logger.Debugf("NVMe discoverNVMeTCP()")
 
-	command := []string{"nvme", "discover", "--transport", "tcp", "--traddr", targetAddr, "-s", "4420"}
+	command := []string{"nvme", "discover", "--transport", "tcp", "--traddr", targetAddr, "--hostnqn", hostNQN, "--hostid", hostID}
 	logger.Debugf("NVMe running command:\n%s", strings.Join(command, " "))
 
 	stdout, err := shared.RunCommandContext(ctx, command[0], command[1:]...)
@@ -135,7 +135,7 @@ func (c *connectorNVMe) Connect(ctx context.Context, targetQN string, targetAddr
 		logger.Debugf("NVMe coonnect timeout in seconds: %d", waitSeconds)
 		time.Sleep(time.Duration(waitSeconds) * time.Second)
 
-		subnqn, err := discoverNVMeTCP(ctx, targetAddr)
+		subnqn, err := discoverNVMeTCP(ctx, targetAddr, hostNQN, c.serverUUID)
 		if err != nil {
 			return fmt.Errorf("Failed to discover NVMe/TCP target %s: %w", targetAddr, err)
 		}
@@ -148,7 +148,7 @@ func (c *connectorNVMe) Connect(ctx context.Context, targetQN string, targetAddr
 			targetQN = subnqn
 		}
 
-		command := []string{"nvme", "connect", "--transport", "tcp", "--traddr", targetAddr, "--nqn", targetQN, "--hostnqn", hostNQN, "--hostid", c.serverUUID, "-s", "4420"}
+		command := []string{"nvme", "connect", "--transport", "tcp", "--traddr", targetAddr, "--nqn", targetQN, "--hostnqn", hostNQN, "--hostid", c.serverUUID}
 		logger.Debugf("NVMe running command:\n%s", strings.Join(command, " "))
 
 		nvmeConnect, err := shared.RunCommandContext(ctx, command[0], command[1:]...)
