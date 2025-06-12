@@ -674,10 +674,101 @@ func (d *powerflex) GetVolumeDiskPath(vol Volume) (string, error) {
 	return "", ErrNotSupported
 }
 
+// filterInstanceVolumes returns the PowerFlex volumes representing containers and virtual machines.
+func (d *powerflex) filterInstanceVolumes(vols []powerFlexVolume) []powerFlexVolume {
+	filteredVols := []powerFlexVolume{}
+
+	for _, vol := range vols {
+		isContainer := strings.HasPrefix(vol.Name, powerFlexVolTypePrefixes[VolumeTypeContainer])
+		isVM := strings.HasPrefix(vol.Name, powerFlexVolTypePrefixes[VolumeTypeVM])
+
+		if isContainer || isVM {
+			filteredVols = append(filteredVols, vol)
+		}
+	}
+
+	return filteredVols
+}
+
 // ListVolumes returns a list of LXD volumes in storage pool.
 // TODO: Add support for recovering volumes and deleting left over volumes in case of pool deletion.
 func (d *powerflex) ListVolumes() ([]Volume, error) {
-	return []Volume{}, nil
+	pool, err := d.resolvePool()
+	if err != nil {
+		return nil, err
+	}
+
+	poolVols, err := d.client().getStoragePoolVolumes(pool.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	filteredVols := d.filterInstanceVolumes(poolVols)
+	vols := make(map[string]Volume)
+
+	for _, filteredVol := range filteredVols {
+		var volType VolumeType
+		var volName string
+
+		for _, volumeType := range d.Info().VolumeTypes {
+			prefix := powerFlexVolTypePrefixes[volumeType]
+			if prefix == "" {
+				continue // Unknown volume type.
+			}
+
+			prefix = prefix + "_"
+
+			if strings.HasPrefix(filteredVol.Name, prefix) {
+				volType = volumeType
+				volName = strings.TrimPrefix(filteredVol.Name, prefix)
+			}
+		}
+
+		if volType == "" {
+			d.logger.Debug("Ignoring unrecognised volume type", logger.Ctx{"name": filteredVol.Name})
+			continue // Ignore unrecognised volume.
+		}
+
+		isBlock := strings.HasSuffix(volName, powerFlexBlockVolSuffix)
+
+		if volType == VolumeTypeVM && !isBlock {
+			continue // Ignore VM filesystem volumes as we will just return the VM's block volume.
+		}
+
+		contentType := ContentTypeFS
+		if volType == VolumeTypeCustom && strings.HasSuffix(volName, powerFlexISOVolSuffix) {
+			contentType = ContentTypeISO
+			volName = strings.TrimSuffix(volName, powerFlexISOVolSuffix)
+		} else if volType == VolumeTypeVM || isBlock {
+			contentType = ContentTypeBlock
+			volName = strings.TrimSuffix(volName, powerFlexBlockVolSuffix)
+		}
+
+		// If a new volume has been found, or the volume will replace an existing image filesystem volume
+		// then proceed to add the volume to the map. We allow image volumes to overwrite existing
+		// filesystem volumes of the same name so that for VM images we only return the block content type
+		// volume (so that only the single "logical" volume is returned).
+		existingVol, foundExisting := vols[volName]
+		if !foundExisting || (existingVol.Type() == VolumeTypeImage && existingVol.ContentType() == ContentTypeFS) {
+			v := NewVolume(d, d.name, volType, contentType, volName, make(map[string]string), d.config)
+
+			if contentType == ContentTypeFS {
+				v.SetMountFilesystemProbe(true)
+			}
+
+			vols[volName] = v
+			continue
+		}
+
+		return nil, fmt.Errorf("Unexpected duplicate volume %q found", volName)
+	}
+
+	volList := make([]Volume, len(vols))
+	for _, v := range vols {
+		volList = append(volList, v)
+	}
+
+	return volList, nil
 }
 
 // DefaultVMBlockFilesystemSize returns the size of a VM root device block volume's associated filesystem volume.
