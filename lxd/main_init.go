@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/canonical/lxd/client"
+	lxd "github.com/canonical/lxd/client"
 	"github.com/canonical/lxd/lxd/util"
 	"github.com/canonical/lxd/shared"
 	"github.com/canonical/lxd/shared/api"
@@ -227,7 +227,7 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 	revert := revert.New()
 	defer revert.Fail()
 
-	localRevert, err := initDataNodeApply(d, config.Node)
+	localRevert, err := initDataNodeApply(d, config.Node, "")
 	if err != nil {
 		return err
 	}

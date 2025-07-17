@@ -5,7 +5,7 @@ import (
 	"maps"
 	"slices"
 
-	"github.com/canonical/lxd/client"
+	lxd "github.com/canonical/lxd/client"
 	"github.com/canonical/lxd/shared"
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/lxd/shared/revert"
@@ -17,7 +17,7 @@ import (
 // It's used both by the 'lxd init' command and by the PUT /1.0/cluster API.
 //
 // In case of error, the returned function can be used to revert the changes.
-func initDataNodeApply(d lxd.InstanceServer, config api.InitLocalPreseed) (func(), error) {
+func initDataNodeApply(d lxd.InstanceServer, config api.InitLocalPreseed, memberName string) (func(), error) {
 	revert := revert.New()
 	defer revert.Fail()
 
@@ -73,8 +73,13 @@ func initDataNodeApply(d lxd.InstanceServer, config api.InitLocalPreseed) (func(
 
 		// StoragePool updater.
 		updateStoragePool := func(storagePool api.StoragePoolsPost) error {
+			// Set the target so when updating the pool we are allowed to modify member specific keys.
+			// It is important to already have the target set when fetching the storage pool to get the right ETag.
+			// In case the target isn't set, the member specific config keys are excluded.
+			// If we want to update those, we have to provide an ETag which incorporates those keys too.
+
 			// Get the current storagePool.
-			currentStoragePool, etag, err := d.GetStoragePool(storagePool.Name)
+			currentStoragePool, etag, err := d.UseTarget(memberName).GetStoragePool(storagePool.Name)
 			if err != nil {
 				return fmt.Errorf("Failed to retrieve current storage pool %q: %w", storagePool.Name, err)
 			}
@@ -85,7 +90,9 @@ func initDataNodeApply(d lxd.InstanceServer, config api.InitLocalPreseed) (func(
 			}
 
 			// Setup reverter.
-			revert.Add(func() { _ = d.UpdateStoragePool(currentStoragePool.Name, currentStoragePool.Writable(), "") })
+			revert.Add(func() {
+				_ = d.UseTarget(memberName).UpdateStoragePool(currentStoragePool.Name, currentStoragePool.Writable(), "")
+			})
 
 			// Prepare the update.
 			newStoragePool := api.StoragePoolPut{}
@@ -102,8 +109,7 @@ func initDataNodeApply(d lxd.InstanceServer, config api.InitLocalPreseed) (func(
 			// Config overrides.
 			maps.Copy(newStoragePool.Config, storagePool.Config)
 
-			// Apply it.
-			err = d.UpdateStoragePool(currentStoragePool.Name, newStoragePool, etag)
+			err = d.UseTarget(memberName).UpdateStoragePool(currentStoragePool.Name, newStoragePool, etag)
 			if err != nil {
 				return fmt.Errorf("Failed to update storage pool %q: %w", storagePool.Name, err)
 			}
@@ -132,8 +138,10 @@ func initDataNodeApply(d lxd.InstanceServer, config api.InitLocalPreseed) (func(
 
 	// Apply network configuration function.
 	applyNetwork := func(network api.InitNetworksProjectPost) error {
-		currentNetwork, etag, err := d.UseProject(network.Project).GetNetwork(network.Name)
+		currentNetwork, etag, err := d.UseProject(network.Project).UseTarget(memberName).GetNetwork(network.Name)
 		if err != nil {
+			fmt.Println("new network config:", network.NetworksPost.Config)
+
 			// Create the network if doesn't exist.
 			err := d.UseProject(network.Project).CreateNetwork(network.NetworksPost)
 			if err != nil {
@@ -159,14 +167,14 @@ func initDataNodeApply(d lxd.InstanceServer, config api.InitLocalPreseed) (func(
 			maps.Copy(newNetwork.Config, network.Config)
 
 			// Apply it.
-			err = d.UseProject(network.Project).UpdateNetwork(currentNetwork.Name, newNetwork, etag)
+			err = d.UseProject(network.Project).UseTarget(memberName).UpdateNetwork(currentNetwork.Name, newNetwork, etag)
 			if err != nil {
 				return fmt.Errorf("Failed to update local member network %q in project %q: %w", network.Name, network.Project, err)
 			}
 
 			// Setup reverter.
 			revert.Add(func() {
-				_ = d.UseProject(network.Project).UpdateNetwork(currentNetwork.Name, currentNetwork.Writable(), "")
+				_ = d.UseProject(network.Project).UseTarget(memberName).UpdateNetwork(currentNetwork.Name, currentNetwork.Writable(), "")
 			})
 		}
 

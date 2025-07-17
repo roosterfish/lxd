@@ -21,7 +21,7 @@ import (
 	dqlite "github.com/canonical/go-dqlite/v3/client"
 	"github.com/gorilla/mux"
 
-	"github.com/canonical/lxd/client"
+	lxd "github.com/canonical/lxd/client"
 	"github.com/canonical/lxd/lxd/acme"
 	"github.com/canonical/lxd/lxd/auth"
 	"github.com/canonical/lxd/lxd/certificate"
@@ -646,7 +646,7 @@ func clusterPutJoin(d *Daemon, r *http.Request, req api.ClusterPut) response.Res
 		})
 
 		d.events.SetLocalLocation(d.serverName)
-		localRevert, err := clusterInitMember(localClient, client, req.MemberConfig)
+		localRevert, err := clusterInitMember(localClient, client, req.MemberConfig, d.serverName)
 		if err != nil {
 			return fmt.Errorf("Failed to initialize member: %w", err)
 		}
@@ -999,7 +999,7 @@ func clusterPutDisable(d *Daemon, r *http.Request, req api.ClusterPut) response.
 // clusterInitMember initialises storage pools and networks on this member. We pass two LXD client instances, one
 // connected to ourselves (the joining member) and one connected to the target cluster member to join.
 // Returns a revert fail function that can be used to undo this function if a subsequent step fails.
-func clusterInitMember(d lxd.InstanceServer, client lxd.InstanceServer, memberConfig []api.ClusterMemberConfigKey) (revert.Hook, error) {
+func clusterInitMember(d lxd.InstanceServer, client lxd.InstanceServer, memberConfig []api.ClusterMemberConfigKey, memberName string) (revert.Hook, error) {
 	data := api.InitLocalPreseed{}
 
 	// Fetch all pools currently defined in the cluster.
@@ -1117,7 +1117,7 @@ func clusterInitMember(d lxd.InstanceServer, client lxd.InstanceServer, memberCo
 		}
 	}
 
-	revert, err := initDataNodeApply(d, data)
+	revert, err := initDataNodeApply(d, data, memberName)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to initialize storage pools and networks: %w", err)
 	}

@@ -14,7 +14,7 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"github.com/canonical/lxd/client"
+	lxd "github.com/canonical/lxd/client"
 	"github.com/canonical/lxd/lxd/auth"
 	"github.com/canonical/lxd/lxd/cluster"
 	clusterRequest "github.com/canonical/lxd/lxd/cluster/request"
@@ -786,19 +786,22 @@ func storagePoolPut(d *Daemon, r *http.Request) response.Response {
 		}
 	}
 
-	// Validate the ETag.
-	etag := []any{pool.Name(), pool.Driver().Info().Name, pool.Description(), etagConfig}
-
-	err = util.EtagCheck(r, etag)
-	if err != nil {
-		return response.PreconditionFailed(err)
-	}
-
 	// Decode the request.
 	req := api.StoragePoolPut{}
 	err = json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
 		return response.BadRequest(err)
+	}
+
+	// Validate the ETag.
+	etag := []any{pool.Name(), pool.Driver().Info().Name, pool.Description(), etagConfig}
+
+	fmt.Println("original req:", req)
+	fmt.Println("etag req:", etag)
+
+	err = util.EtagCheck(r, etag)
+	if err != nil {
+		return response.PreconditionFailed(err)
 	}
 
 	// In clustered mode, we differentiate between node specific and non-node specific config keys based on
