@@ -343,6 +343,17 @@ func (p *powerFlexClient) getStoragePoolStatistics(poolID string) (*powerFlexSto
 	return &actualResponse, nil
 }
 
+// getStoragePoolVolumes returns the storage pools volumes.
+func (p *powerFlexClient) getStoragePoolVolumes(poolID string) ([]powerFlexVolume, error) {
+	var actualResponse []powerFlexVolume
+	err := p.requestAuthenticated(http.MethodGet, "/api/instances/StoragePool::"+poolID+"/relationships/Volume", nil, &actualResponse)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to get storage pool volumes: %q: %w", poolID, err)
+	}
+
+	return actualResponse, nil
+}
+
 // getProtectionDomainID returns the ID of the protection domain behind domainName.
 func (p *powerFlexClient) getProtectionDomainID(domainName string) (string, error) {
 	body := map[string]any{
@@ -1250,6 +1261,22 @@ func (d *powerflex) getVolumeName(vol Volume) (string, error) {
 	}
 
 	return volumeTypePrefix + volName + suffix, nil
+}
+
+// getUUIDFromVolumeName transforms the volume's name to the respective UUID.
+// It expects the volume name without any prefix/suffix.
+func (d *powerflex) getUUIDFromVolumeName(name string) (string, error) {
+	decodedName, err := base64.StdEncoding.DecodeString(name)
+	if err != nil {
+		return "", fmt.Errorf("Failed to decode volume name %q: %w", name, err)
+	}
+
+	uuidBytes, err := uuid.FromBytes(decodedName)
+	if err != nil {
+		return "", fmt.Errorf("Failed to parse UUID from decoded volume name: %w", err)
+	}
+
+	return uuidBytes.String(), nil
 }
 
 // discover returns the SDTs (targets) found on the first reachable targetAddr.

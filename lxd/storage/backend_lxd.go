@@ -7492,6 +7492,12 @@ func (b *lxdBackend) ListUnknownVolumes(op *operations.Operation) (map[string][]
 	for _, poolVol := range poolVols {
 		volType := poolVol.Type()
 
+		// TODO: not enough vols are returned from PowerFlex's ListVolumes() ??
+		// Skip custom volumes from drivers using transformed volume names.
+		if volType == drivers.VolumeTypeCustom && b.driver.Info().TransformedVolumeName {
+			continue
+		}
+
 		// If the storage driver has returned a filesystem volume for a VM, this is a break of protocol.
 		if volType == drivers.VolumeTypeVM && poolVol.ContentType() == drivers.ContentTypeFS {
 			return nil, fmt.Errorf("Storage driver returned unexpected VM volume with filesystem content type (%q)", poolVol.Name())

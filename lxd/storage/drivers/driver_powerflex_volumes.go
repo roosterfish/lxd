@@ -675,9 +675,75 @@ func (d *powerflex) GetVolumeDiskPath(vol Volume) (string, error) {
 }
 
 // ListVolumes returns a list of LXD volumes in storage pool.
-// TODO: Add support for recovering volumes and deleting left over volumes in case of pool deletion.
+// It returns all volumes and sets the volume's volatile.uuid extracted from the name.
 func (d *powerflex) ListVolumes() ([]Volume, error) {
-	return []Volume{}, nil
+	pool, err := d.resolvePool()
+	if err != nil {
+		return nil, err
+	}
+
+	volumes, err := d.client().getStoragePoolVolumes(pool.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	var volList []Volume
+	for _, vol := range volumes {
+		var volType VolumeType
+		var volName string
+
+		for _, volumeType := range d.Info().VolumeTypes {
+			prefix := powerFlexVolTypePrefixes[volumeType] + "_"
+
+			if strings.HasPrefix(vol.Name, prefix) {
+				volType = volumeType
+				volName = strings.TrimPrefix(vol.Name, prefix)
+			}
+		}
+
+		if volType == "" {
+			d.logger.Debug("Ignoring unrecognised volume type", logger.Ctx{"name": vol.Name})
+			continue
+		}
+
+		isBlock := strings.HasSuffix(volName, powerFlexBlockVolSuffix)
+
+		// Ignore VM filesystem volumes as we will just return the VM's block volume.
+		if volType == VolumeTypeVM && !isBlock {
+			continue
+		}
+
+		contentType := ContentTypeFS
+		if volType == VolumeTypeCustom && strings.HasSuffix(volName, powerFlexISOVolSuffix) {
+			contentType = ContentTypeISO
+			volName = strings.TrimSuffix(volName, powerFlexISOVolSuffix)
+		} else if volType == VolumeTypeVM || isBlock {
+			contentType = ContentTypeBlock
+			volName = strings.TrimSuffix(volName, powerFlexBlockVolSuffix)
+		}
+
+		volUUID, err := d.getUUIDFromVolumeName(volName)
+		if err != nil {
+			d.logger.Debug("Ignoring malformed volume name", logger.Ctx{"name": vol.Name})
+			continue
+		}
+
+		// This is important to allow subsequent operations on the volume struct (e.g. driver's HasVolume) to be able to
+		// resolve the volume's name using the its volatile.uuid.
+		volConfig := map[string]string{
+			"volatile.uuid": volUUID,
+		}
+
+		v := NewVolume(d, d.name, volType, contentType, volName, volConfig, d.config)
+
+		if contentType == ContentTypeFS {
+			v.SetMountFilesystemProbe(true)
+		}
+
+		volList = append(volList, v)
+	}
+
+	return volList, nil
 }
 
 // DefaultVMBlockFilesystemSize returns the size of a VM root device block volume's associated filesystem volume.
