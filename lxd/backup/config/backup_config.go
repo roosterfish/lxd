@@ -49,8 +49,8 @@ type Bucket struct {
 
 // configMetadata represents internal fields which don't appear on the materialized backup config.
 type configMetadata struct {
-	// lastModified tracks the backup file's modification time.
-	lastModified time.Time
+	// lastModifiedAt tracks the backup file's modification time.
+	lastModifiedAt time.Time
 }
 
 // Config represents the config of a backup that can be stored in a backup.yaml file (or embedded in index.yaml).
