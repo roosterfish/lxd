@@ -79,10 +79,10 @@ type Config struct {
 }
 
 // NewConfig returns a new Config instance initialized with an immutable last modified time.
-func NewConfig(lastModified time.Time) *Config {
+func NewConfig(lastModifiedAt time.Time) *Config {
 	return &Config{
 		metadata: configMetadata{
-			lastModified: lastModified,
+			lastModifiedAt: lastModifiedAt,
 		},
 	}
 }
@@ -219,5 +219,5 @@ func (c *Config) CustomVolume() (*Volume, error) {
 
 // LastModified returns the backup config's immutable last modification time.
 func (c *Config) LastModified() time.Time {
-	return c.metadata.lastModified
+	return c.metadata.lastModifiedAt
 }
