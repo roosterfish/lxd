@@ -108,6 +108,10 @@ func instancePost(d *Daemon, r *http.Request) response.Response {
 		return response.BadRequest(errors.New("Target only allowed when clustered"))
 	}
 
+	if s.ServerClustered && target == s.ServerName {
+		return response.BadRequest(fmt.Errorf("Instance %q is already located at %q", name, target))
+	}
+
 	// A POST to /instances/<name>?target=<member> is meant to be used to
 	// move an instance from one member to another within a cluster.
 	//
