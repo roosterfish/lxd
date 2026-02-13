@@ -307,6 +307,9 @@ test_clustering_containers() {
   [ "$(LXD_DIR="${LXD_ONE_DIR}" lxc list -f csv -c nsL)" = "foo,STOPPED,node2" ]
   [ "$(LXD_DIR="${LXD_TWO_DIR}" lxc list -f csv -c nsL)" = "foo,STOPPED,node2" ]
 
+  echo "The container cannot be moved to the node it's already located on"
+  [ "$(LXD_DIR="${LXD_TWO_DIR}" lxc move foo --target node2)" = 'Error: Migration API failure: Instance "foo" is already located at "node2"' ]
+
   echo "Start the container via node1."
   LXD_DIR="${LXD_ONE_DIR}" lxc start foo
   [ "$(LXD_DIR="${LXD_TWO_DIR}" lxc list -f csv -c nsL)" = "foo,RUNNING,node2" ]
