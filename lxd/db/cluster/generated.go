@@ -264,6 +264,188 @@ func (i *IdentityCertificate) ScanArgs() []any {
 	return []any{&i.Row.ID, &i.Row.Fingerprint, &i.Row.Certificate, &i.Row.CreationDate, &i.IdentityID}
 }
 
+// TableName returns the table name for [NetworksLoadBalancersPool] entities.
+func (n NetworksLoadBalancersPool) TableName() string {
+	return "networks_load_balancers_pools"
+}
+
+// APIName implements [query.APINamer] for API friendly error messages.
+func (n NetworksLoadBalancersPool) APIName() string {
+	return n.Row.APIName()
+}
+
+// SelectColumns returns a slice of column names for [NetworksLoadBalancersPool] entities.
+func (n NetworksLoadBalancersPool) SelectColumns() []string {
+	return []string{
+		"networks_load_balancers_pools.id",
+		"networks_load_balancers_pools.network_id",
+		"networks_load_balancers_pools.name",
+		"networks_load_balancers_pools.description",
+		"networks.name",
+		"projects.name",
+	}
+}
+
+// Joins returns a slice of join expressions for [NetworksLoadBalancersPool].
+func (n NetworksLoadBalancersPool) Joins() []string {
+	return []string{
+		"JOIN networks ON networks.id = networks_load_balancers_pools.network_id",
+		"JOIN projects ON projects.id = networks.project_id",
+	}
+}
+
+// ScanArgs implements [query.ScanArger] for [NetworksLoadBalancersPool].
+// This returns references to struct fields in definition order.
+func (n *NetworksLoadBalancersPool) ScanArgs() []any {
+	return []any{&n.Row.ID, &n.Row.NetworkID, &n.Row.Name, &n.Row.Description, &n.NetworkName, &n.ProjectName}
+}
+
+// TableName returns the table name for [NetworksLoadBalancersPoolInstance] entities.
+func (n NetworksLoadBalancersPoolInstance) TableName() string {
+	return "networks_load_balancers_pools_instances"
+}
+
+// APIName implements [query.APINamer] for API friendly error messages.
+func (n NetworksLoadBalancersPoolInstance) APIName() string {
+	return n.Row.APIName()
+}
+
+// SelectColumns returns a slice of column names for [NetworksLoadBalancersPoolInstance] entities.
+func (n NetworksLoadBalancersPoolInstance) SelectColumns() []string {
+	return []string{
+		"networks_load_balancers_pools_instances.id",
+		"networks_load_balancers_pools_instances.network_load_balancer_pool_id",
+		"networks_load_balancers_pools_instances.instance_id",
+		"networks_load_balancers_pools_instances.target_port",
+		"instances.name",
+	}
+}
+
+// Joins returns a slice of join expressions for [NetworksLoadBalancersPoolInstance].
+func (n NetworksLoadBalancersPoolInstance) Joins() []string {
+	return []string{
+		"JOIN instances ON instances.id = networks_load_balancers_pools_instances.instance_id",
+	}
+}
+
+// ScanArgs implements [query.ScanArger] for [NetworksLoadBalancersPoolInstance].
+// This returns references to struct fields in definition order.
+func (n *NetworksLoadBalancersPoolInstance) ScanArgs() []any {
+	return []any{&n.Row.ID, &n.Row.PoolID, &n.Row.InstanceID, &n.Row.TargetPort, &n.InstanceName}
+}
+
+// TableName returns the table name for [NetworksLoadBalancersPoolInstanceRow] entities.
+func (n NetworksLoadBalancersPoolInstanceRow) TableName() string {
+	return "networks_load_balancers_pools_instances"
+}
+
+// SelectColumns returns a slice of column names for [NetworksLoadBalancersPoolInstanceRow] entities.
+func (n NetworksLoadBalancersPoolInstanceRow) SelectColumns() []string {
+	return []string{
+		"networks_load_balancers_pools_instances.id",
+		"networks_load_balancers_pools_instances.network_load_balancer_pool_id",
+		"networks_load_balancers_pools_instances.instance_id",
+		"networks_load_balancers_pools_instances.target_port",
+	}
+}
+
+// Joins returns a slice of join expressions for [NetworksLoadBalancersPoolInstanceRow].
+func (n NetworksLoadBalancersPoolInstanceRow) Joins() []string {
+	return []string{}
+}
+
+// ScanArgs implements [query.ScanArger] for [NetworksLoadBalancersPoolInstanceRow].
+// This returns references to struct fields in definition order.
+func (n *NetworksLoadBalancersPoolInstanceRow) ScanArgs() []any {
+	return []any{&n.ID, &n.PoolID, &n.InstanceID, &n.TargetPort}
+}
+
+// CreateValues returns a list of values from [NetworksLoadBalancersPoolInstanceRow] entities matching the bind arguments in [CreateStmt].
+func (n NetworksLoadBalancersPoolInstanceRow) CreateValues() []any {
+	return []any{n.PoolID, n.InstanceID, n.TargetPort}
+}
+
+// UpdateValues returns a list of values from [NetworksLoadBalancersPoolInstanceRow] entities matching the columns in [UpdateStmt].
+func (n NetworksLoadBalancersPoolInstanceRow) UpdateValues() []any {
+	return []any{n.PoolID, n.InstanceID, n.TargetPort}
+}
+
+// PKColumn returns the column name for the primary key of a [NetworksLoadBalancersPoolInstanceRow] entity used during an update.
+func (n NetworksLoadBalancersPoolInstanceRow) PKColumn() string {
+	return "id"
+}
+
+// PKValue returns the value for the primary key of a [NetworksLoadBalancersPoolInstanceRow] entity used during an update.
+func (n NetworksLoadBalancersPoolInstanceRow) PKValue() any {
+	return n.ID
+}
+
+// CreateStmt returns a query that creates a [NetworksLoadBalancersPoolInstanceRow] entity.
+func (n NetworksLoadBalancersPoolInstanceRow) CreateStmt() string {
+	return "INSERT INTO networks_load_balancers_pools_instances (network_load_balancer_pool_id, instance_id, target_port) VALUES (?, ?, ?)"
+}
+
+// UpdateStmt returns a query that updates a [NetworksLoadBalancersPoolInstanceRow] by primary key.
+func (n NetworksLoadBalancersPoolInstanceRow) UpdateStmt() string {
+	return "UPDATE networks_load_balancers_pools_instances SET network_load_balancer_pool_id = ?, instance_id = ?, target_port = ? "
+}
+
+// TableName returns the table name for [NetworksLoadBalancersPoolRow] entities.
+func (n NetworksLoadBalancersPoolRow) TableName() string {
+	return "networks_load_balancers_pools"
+}
+
+// SelectColumns returns a slice of column names for [NetworksLoadBalancersPoolRow] entities.
+func (n NetworksLoadBalancersPoolRow) SelectColumns() []string {
+	return []string{
+		"networks_load_balancers_pools.id",
+		"networks_load_balancers_pools.network_id",
+		"networks_load_balancers_pools.name",
+		"networks_load_balancers_pools.description",
+	}
+}
+
+// Joins returns a slice of join expressions for [NetworksLoadBalancersPoolRow].
+func (n NetworksLoadBalancersPoolRow) Joins() []string {
+	return []string{}
+}
+
+// ScanArgs implements [query.ScanArger] for [NetworksLoadBalancersPoolRow].
+// This returns references to struct fields in definition order.
+func (n *NetworksLoadBalancersPoolRow) ScanArgs() []any {
+	return []any{&n.ID, &n.NetworkID, &n.Name, &n.Description}
+}
+
+// CreateValues returns a list of values from [NetworksLoadBalancersPoolRow] entities matching the bind arguments in [CreateStmt].
+func (n NetworksLoadBalancersPoolRow) CreateValues() []any {
+	return []any{n.NetworkID, n.Name, n.Description}
+}
+
+// UpdateValues returns a list of values from [NetworksLoadBalancersPoolRow] entities matching the columns in [UpdateStmt].
+func (n NetworksLoadBalancersPoolRow) UpdateValues() []any {
+	return []any{n.NetworkID, n.Name, n.Description}
+}
+
+// PKColumn returns the column name for the primary key of a [NetworksLoadBalancersPoolRow] entity used during an update.
+func (n NetworksLoadBalancersPoolRow) PKColumn() string {
+	return "id"
+}
+
+// PKValue returns the value for the primary key of a [NetworksLoadBalancersPoolRow] entity used during an update.
+func (n NetworksLoadBalancersPoolRow) PKValue() any {
+	return n.ID
+}
+
+// CreateStmt returns a query that creates a [NetworksLoadBalancersPoolRow] entity.
+func (n NetworksLoadBalancersPoolRow) CreateStmt() string {
+	return "INSERT INTO networks_load_balancers_pools (network_id, name, description) VALUES (?, ?, ?)"
+}
+
+// UpdateStmt returns a query that updates a [NetworksLoadBalancersPoolRow] by primary key.
+func (n NetworksLoadBalancersPoolRow) UpdateStmt() string {
+	return "UPDATE networks_load_balancers_pools SET network_id = ?, name = ?, description = ? "
+}
+
 // TableName returns the table name for [PlacementGroup] entities.
 func (p PlacementGroup) TableName() string {
 	return "placement_groups"

@@ -362,6 +362,30 @@ CREATE TABLE "networks_load_balancers_config" (
 	UNIQUE (network_load_balancer_id, key),
 	FOREIGN KEY (network_load_balancer_id) REFERENCES "networks_load_balancers" (id) ON DELETE CASCADE
 );
+CREATE TABLE networks_load_balancers_pools (
+	id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+	network_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+	UNIQUE (network_id, name),
+    FOREIGN KEY (network_id) REFERENCES networks (id)
+);
+CREATE TABLE networks_load_balancers_pools_config (
+	id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+	network_load_balancer_pool_id INTEGER NOT NULL,
+	key TEXT NOT NULL,
+	value TEXT,
+	UNIQUE (network_load_balancer_pool_id, key),
+	FOREIGN KEY (network_load_balancer_pool_id) REFERENCES networks_load_balancers_pools (id) ON DELETE CASCADE
+);
+CREATE TABLE networks_load_balancers_pools_instances (
+	id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+	network_load_balancer_pool_id INTEGER NOT NULL,
+	instance_id INTEGER NOT NULL,
+	target_port TEXT,
+	UNIQUE (network_load_balancer_pool_id, instance_id),
+	FOREIGN KEY (network_load_balancer_pool_id) REFERENCES networks_load_balancers_pools (id) ON DELETE CASCADE
+);
 CREATE TABLE "networks_nodes" (
     id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
     network_id INTEGER NOT NULL,
@@ -795,5 +819,5 @@ CREATE TABLE "warnings" (
 );
 CREATE UNIQUE INDEX warnings_unique_node_id_project_id_entity_type_code_entity_id_type_code ON warnings(IFNULL(node_id, -1), IFNULL(project_id, -1), entity_type_code, entity_id, type_code);
 
-INSERT INTO schema (version, updated_at) VALUES (84, strftime("%s"))
+INSERT INTO schema (version, updated_at) VALUES (85, strftime("%s"))
 `
