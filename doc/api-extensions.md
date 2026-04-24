@@ -3099,3 +3099,19 @@ The following pool level configuration keys have been added:
 1. {config:option}`storage-powerstore-pool-conf:powerstore.user.password`
 1. {config:option}`storage-powerstore-pool-conf:powerstore.mode`
 1. {config:option}`storage-powerstore-pool-conf:powerstore.target`
+
+(extension-network-load-balancer-pool)=
+## `network_load_balancer_pool`
+
+This introduces the load balancer pools for OVN networks.
+Pools are used to group instances to which a load balancer forwards traffic.
+Health checks are performed for all instances in the pool to differentiate between online and offline instances.
+
+This includes the following new endpoints (see {ref}`rest-api` for details):
+
+* [`GET /1.0/networks/{networkName}/load-balancer-pools`](swagger:/network-load-balancer-pools/network_load_balancer_pools_get)
+* [`POST /1.0/networks/{networkName}/load-balancer-pools`](swagger:/network-load-balancer-pools/network_load_balancer_pools_post)
+* [`GET /1.0/networks/{networkName}/load-balancer-pools/{poolName}`](swagger:/network-load-balancer-pools/network_load_balancer_pool_get)
+* [`PUT /1.0/networks/{networkName}/load-balancer-pools/{poolName}`](swagger:/network-load-balancer-pools/network_load_balancer_pool_put)
+* [`DELETE /1.0/networks/{networkName}/load-balancer-pools/{poolName}`](swagger:/network-load-balancer-pools/network_load_balancer_pool_delete)
+* [`GET /1.0/networks/{networkName}/load-balancer-pools/{poolName}/state`](swagger:/network-load-balancer-pools/network_load_balancer_pool_state_get)
