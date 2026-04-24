@@ -143,8 +143,18 @@ type OVNACLRule struct {
 
 // OVNLoadBalancerTarget represents an OVN load balancer Virtual IP target.
 type OVNLoadBalancerTarget struct {
-	Address net.IP
-	Port    uint64
+	Address    net.IP
+	SwitchPort OVNSwitchPort
+	Port       uint64
+}
+
+// OVNLoadBalancerHealthCheck represents a OVN load balancer health check.
+type OVNLoadBalancerHealthCheck struct {
+	Interval      uint32
+	Timeout       uint32
+	SuccessCount  uint32
+	FailureCount  uint32
+	SourceAddress net.IP
 }
 
 // OVNLoadBalancerVIP represents a OVN load balancer Virtual IP entry.
@@ -153,6 +163,13 @@ type OVNLoadBalancerVIP struct {
 	ListenAddress net.IP
 	ListenPort    uint64
 	Targets       []OVNLoadBalancerTarget
+	HealthCheck   *OVNLoadBalancerHealthCheck
+}
+
+// OVNServiceMonitorStatus represents the status of an OVN load balancer target as reported by OVN's service monitor.
+type OVNServiceMonitorStatus struct {
+	Address net.IP
+	Status  string
 }
 
 // OVNRouterRoute represents a static route added to a logical router.
