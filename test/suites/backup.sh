@@ -1315,3 +1315,208 @@ EOF
   lxc delete -f c1
   rm -r "${tmpDir}"
 }
+
+backup_check_new_daemon_panics() {
+  local logFile startLine mutation newLog
+  logFile="${1}"
+  startLine="${2}"
+  mutation="${3}"
+  newLog="${4}"
+
+  # Only inspect lines emitted by the current mutation.
+  tail --lines="+$((startLine + 1))" "${logFile}" > "${newLog}"
+
+  if grep --extended-regexp 'http: panic serving|^goroutine [0-9]+ \[running\]:' "${newLog}"; then
+    echo "FAIL: daemon panicked during mutation: ${mutation}" >&2
+    return 1
+  fi
+
+  return 0
+}
+
+test_backup_nullable_fields() {
+  local poolName tmpDir mutation rc=0 startLine newLog
+  poolName="lxdtest-$(basename "${LXD_DIR}")"
+  tmpDir=$(mktemp --directory --tmpdir="${TEST_DIR}" backups-nullable-XXX)
+
+  # net/http recovers panics in HTTP handlers and routes them at INFO level.
+  # Run this test with --verbose so panic-checker can see any panic produced
+  # by malformed backup metadata without full debug log noise.
+  shutdown_lxd "${LXD_DIR}"
+  SERVER_DEBUG=--verbose respawn_lxd "${LXD_DIR}" true
+
+  ensure_import_testimage
+
+  # Use a real exported tarball as the baseline rather than hand-rolled YAML
+  # so any code path that depends on a well-formed export is exercised at
+  # least once before we start tampering.
+  lxc init testimage nullable-test --device "${SMALL_ROOT_DISK}"
+  lxc snapshot nullable-test snap0
+  lxc export nullable-test "${tmpDir}/baseline.tar" --compression none
+  lxc delete --force nullable-test
+
+  mkdir --parents "${tmpDir}/extract"
+  tar --extract --file "${tmpDir}/baseline.tar" --directory "${tmpDir}/extract"
+
+  # yq from the snap cannot read inside ${tmpDir}, so keep a copy of the
+  # pristine index in $PWD and resolve mutations through there.
+  cp "${tmpDir}/extract/backup/index.yaml" baseline-index.yaml
+
+  # Sanity-check that the unmutated tarball still imports.
+  cp baseline-index.yaml "${tmpDir}/extract/backup/index.yaml"
+  tar --create --file "${tmpDir}/case.tar" --directory "${tmpDir}/extract" backup/
+  lxc import "${tmpDir}/case.tar"
+  lxc delete --force nullable-test
+
+  # Each mutation is applied to a fresh copy of the baseline. The assertions
+  # are intentionally generic: the daemon must remain reachable and no
+  # half-created instance must be left behind. Specific error messages are
+  # not asserted because they may evolve. The panic_checker hook in the
+  # standard test cleanup catches any panic that surfaces in lxd.log.
+  for mutation in \
+    'del(.config)' \
+    'del(.config.instance)' \
+    'del(.config.snapshots)' \
+    'del(.config.pools)' \
+    'del(.config.profiles)' \
+    'del(.config.volumes)' \
+    'del(.config.volume_snapshots)' \
+    'del(.config.instance.config)' \
+    'del(.config.instance.devices)' \
+    'del(.config.instance.expanded_devices)' \
+    'del(.snapshots)' \
+    '.config = null' \
+    '.config = []' \
+    '.config.instance = null' \
+    '.config.snapshots = null' \
+    '.config.snapshots = []' \
+    '.config.snapshots = [null]' \
+    '.config.pools = null' \
+    '.config.pools = []' \
+    '.config.pools = [null]' \
+    '.config.profiles = null' \
+    '.config.profiles = [null]' \
+    '.config.volumes = null' \
+    '.config.volumes = []' \
+    '.config.volumes = [null]' \
+    '.config.volumes[0].snapshots = null' \
+    '.config.volumes[0].snapshots = [null]' \
+    '.config.volume_snapshots = null' \
+    '.config.volume_snapshots = [null]' \
+    '.config.instance.config = null' \
+    '.config.instance.devices = null' \
+    '.config.instance.expanded_devices = null' \
+    '.snapshots = null' \
+    '.snapshots = []' \
+    '.snapshots = ["snap0"] | .config.snapshots = []' \
+    '.snapshots = ["snap0"] | .config.volumes[0].snapshots = []' \
+  ; do
+    yq "${mutation}" < baseline-index.yaml > temp.yaml
+    mv temp.yaml "${tmpDir}/extract/backup/index.yaml"
+    tar --create --file "${tmpDir}/case.tar" --directory "${tmpDir}/extract" backup/
+    startLine=$(wc -l < "${LXD_DIR}/lxd.log")
+
+    # Import may succeed or fail depending on the mutation, but the daemon
+    # must stay healthy in either case.
+    if lxc import "${tmpDir}/case.tar" 2>import-error; then
+      lxc delete --force nullable-test
+    fi
+
+    newLog="${tmpDir}/lxd-new.log"
+    if ! backup_check_new_daemon_panics "${LXD_DIR}/lxd.log" "${startLine}" "${mutation}" "${newLog}"; then
+      rc=1
+      break
+    fi
+
+    # The daemon must still respond.
+    lxc list --format csv --columns n > current-instances
+
+    # No partial instance can remain behind regardless of import outcome.
+    if grep --fixed-strings --line-regexp 'nullable-test' current-instances; then
+      echo "FAIL: leftover instance after mutation: ${mutation}" >&2
+      rc=1
+      break
+    fi
+
+    rm -f import-error current-instances "${tmpDir}/case.tar" "${newLog}"
+  done
+
+  rm -f baseline-index.yaml import-error current-instances "${tmpDir}/lxd-new.log"
+  rm -rf "${tmpDir}"
+  shutdown_lxd "${LXD_DIR}"
+  respawn_lxd "${LXD_DIR}" true
+
+  return "${rc}"
+}
+
+test_backup_nullable_fields_custom_volume() {
+  local pool tmpDir mutation rc=0 startLine newLog
+  pool=$(lxc profile device get default root pool)
+  tmpDir=$(mktemp --directory --tmpdir="${TEST_DIR}" backups-nullable-vol-XXX)
+
+  # Same rationale as test_backup_nullable_fields: enable --verbose so
+  # handler panics are visible for panic-checker with less noise.
+  shutdown_lxd "${LXD_DIR}"
+  SERVER_DEBUG=--verbose respawn_lxd "${LXD_DIR}" true
+
+  lxc storage volume create "${pool}" nullable-vol-test
+  lxc storage volume snapshot "${pool}" nullable-vol-test snap0
+  lxc storage volume export "${pool}" nullable-vol-test "${tmpDir}/baseline.tar" \
+    --compression none
+  lxc storage volume delete "${pool}" nullable-vol-test
+
+  mkdir --parents "${tmpDir}/extract"
+  tar --extract --file "${tmpDir}/baseline.tar" --directory "${tmpDir}/extract"
+
+  cp "${tmpDir}/extract/backup/index.yaml" baseline-vol-index.yaml
+
+  # Sanity-check that the unmutated tarball still imports.
+  cp baseline-vol-index.yaml "${tmpDir}/extract/backup/index.yaml"
+  tar --create --file "${tmpDir}/case.tar" --directory "${tmpDir}/extract" backup/
+  lxc storage volume import "${pool}" "${tmpDir}/case.tar" nullable-vol-test
+  lxc storage volume delete "${pool}" nullable-vol-test
+
+  for mutation in \
+    'del(.config)' \
+    'del(.config.volume_snapshots)' \
+    'del(.config.volume)' \
+    '.config = null' \
+    '.config = []' \
+    '.config.volume_snapshots = null' \
+    '.config.volume_snapshots = []' \
+    '.config.volume_snapshots = [null]' \
+    '.config.volume = null' \
+  ; do
+    yq "${mutation}" < baseline-vol-index.yaml > temp.yaml
+    mv temp.yaml "${tmpDir}/extract/backup/index.yaml"
+    tar --create --file "${tmpDir}/case.tar" --directory "${tmpDir}/extract" backup/
+    startLine=$(wc -l < "${LXD_DIR}/lxd.log")
+
+    if lxc storage volume import "${pool}" "${tmpDir}/case.tar" nullable-vol-test 2>import-error; then
+      lxc storage volume delete "${pool}" nullable-vol-test
+    fi
+
+    newLog="${tmpDir}/lxd-new.log"
+    if ! backup_check_new_daemon_panics "${LXD_DIR}/lxd.log" "${startLine}" "${mutation}" "${newLog}"; then
+      rc=1
+      break
+    fi
+
+    lxc storage volume list "${pool}" --format csv --columns n > current-volumes
+
+    if grep --fixed-strings --line-regexp 'nullable-vol-test' current-volumes; then
+      echo "FAIL: leftover volume after mutation: ${mutation}" >&2
+      rc=1
+      break
+    fi
+
+    rm -f import-error current-volumes "${tmpDir}/case.tar" "${newLog}"
+  done
+
+  rm -f baseline-vol-index.yaml import-error current-volumes "${tmpDir}/lxd-new.log"
+  rm -rf "${tmpDir}"
+  shutdown_lxd "${LXD_DIR}"
+  respawn_lxd "${LXD_DIR}" true
+
+  return "${rc}"
+}
