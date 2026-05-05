@@ -635,6 +635,8 @@ if [ "${1:-"all"}" != "snap" ] && [ "${1:-"all"}" != "cluster" ]; then
     run_test test_backup_export_import_instance_only "backup export and import instance only"
     run_test test_backup_metadata "backup metadata checks for containers and custom storage volumes"
     run_test test_backup_inconsistent_config "backup config inconsistency checks"
+    run_test test_backup_nullable_fields "backup nullable fields checks for instances"
+    run_test test_backup_nullable_fields_custom_volume "backup nullable fields checks for custom storage volumes"
     run_test test_backup_volume_rename_delete "backup volume rename and delete"
     run_test test_backup_instance_uuid "backup instance and check instance UUIDs"
     run_test test_backup_volume_expiry "backup volume expiry"
