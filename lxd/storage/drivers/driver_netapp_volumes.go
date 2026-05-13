@@ -78,7 +78,8 @@ func (d *netapp) GetVolumeDiskPath(vol Volume) (string, error) {
 		return "", ErrNotSupported
 	}
 
-	return d.getMappedDevPath(d.client().getVolumeName(vol))
+	devPath, _, err := d.getMappedDevPath(vol, false)
+	return devPath, err
 }
 
 // HasVolume returns whether the FlexVol backing the volume currently exists on
@@ -98,25 +99,129 @@ func (d *netapp) HasVolume(vol Volume) (bool, error) {
 	return true, nil
 }
 
-// getMappedDevPath resolves the NVMe namespace for the given volume to a local
-// device path. The namespace NGUID is what the Linux NVMe driver exposes via
-// /dev/disk/by-id/nvme-eui.<nguid> once the host has an active session.
-func (d *netapp) getMappedDevPath(volName string) (string, error) {
+// mapVolume maps the NVMe namespace for vol to this host's subsystem and opens
+// the NVMe/TCP session. It returns a cleanup hook that unwinds the mapping on
+// failure.
+func (d *netapp) mapVolume(vol Volume) (revert.Hook, error) {
+	reverter := revert.New()
+	defer reverter.Fail()
+
 	svmName := d.client().svmName
+	volName := d.client().getVolumeName(vol)
 	nsPath := fmt.Sprintf("/vol/%s/ns0", volName)
 
 	ns, err := d.client().getNamespace(d.state.ShutdownCtx, nsPath, svmName)
 	if err != nil {
-		return "", err
+		return nil, fmt.Errorf("Failed retrieving namespace for mount: %w", err)
 	}
 
-	if ns.NGUID == "" {
-		return "", fmt.Errorf("Namespace %q has no NGUID", nsPath)
+	subsys, err := d.ensureHost()
+	if err != nil {
+		return nil, fmt.Errorf("Failed ensuring host subsystem: %w", err)
+	}
+
+	err = d.client().mapNamespace(d.state.ShutdownCtx, ns.UUID, subsys.UUID)
+	if err != nil {
+		return nil, fmt.Errorf("Failed mapping namespace to subsystem: %w", err)
+	}
+
+	reverter.Add(func() { _ = d.client().unmapNamespace(d.state.ShutdownCtx, ns.UUID, subsys.UUID) })
+
+	var targets []string
+	if targetConf := d.config["netapp.target"]; targetConf != "" {
+		targets = append(targets, targetConf)
+	} else {
+		targets, err = d.client().getNVMeTargetPortals(d.state.ShutdownCtx, svmName)
+		if err != nil {
+			return nil, fmt.Errorf("Failed obtaining NVMe target portals: %w", err)
+		}
 	}
 
 	conn, err := d.connector()
 	if err != nil {
-		return "", err
+		return nil, err
+	}
+
+	disconnect, err := conn.Connect(d.state.ShutdownCtx, subsys.TargetNQN, targets...)
+	if err != nil {
+		return nil, fmt.Errorf("Failed connecting to NVMe subsystem: %w", err)
+	}
+
+	reverter.Add(disconnect)
+
+	cleanup := reverter.Clone().Fail
+	reverter.Success()
+	return cleanup, nil
+}
+
+// unmapVolume unmaps the NVMe namespace for vol from this host's subsystem and
+// disconnects the NVMe/TCP session.
+func (d *netapp) unmapVolume(vol Volume) error {
+	svmName := d.client().svmName
+	volName := d.client().getVolumeName(vol)
+	nsPath := fmt.Sprintf("/vol/%s/ns0", volName)
+
+	ns, err := d.client().getNamespace(d.state.ShutdownCtx, nsPath, svmName)
+	if err != nil {
+		return nil
+	}
+
+	subsysName := d.getSubsystemName()
+	subsys, err := d.client().getSubsystem(d.state.ShutdownCtx, subsysName, svmName)
+	if err != nil {
+		return nil
+	}
+
+	err = d.client().unmapNamespace(d.state.ShutdownCtx, ns.UUID, subsys.UUID)
+	if err != nil {
+		return fmt.Errorf("Failed unmapping NVMe namespace: %w", err)
+	}
+
+	conn, err := d.connector()
+	if err != nil {
+		return err
+	}
+
+	err = conn.Disconnect(subsys.TargetNQN)
+	if err != nil {
+		return fmt.Errorf("Failed disconnecting NVMe session: %w", err)
+	}
+
+	return nil
+}
+
+// getMappedDevPath returns the local device path for the given volume.
+// When mapVolume is true the volume is mapped to the host if it is not already;
+// when false the device is expected to already be present.
+func (d *netapp) getMappedDevPath(vol Volume, doMapVolume bool) (string, revert.Hook, error) {
+	reverter := revert.New()
+	defer reverter.Fail()
+
+	if doMapVolume {
+		cleanup, err := d.mapVolume(vol)
+		if err != nil {
+			return "", nil, err
+		}
+
+		reverter.Add(cleanup)
+	}
+
+	svmName := d.client().svmName
+	volName := d.client().getVolumeName(vol)
+	nsPath := fmt.Sprintf("/vol/%s/ns0", volName)
+
+	ns, err := d.client().getNamespace(d.state.ShutdownCtx, nsPath, svmName)
+	if err != nil {
+		return "", nil, err
+	}
+
+	if ns.NGUID == "" {
+		return "", nil, fmt.Errorf("Namespace %q has no NGUID", nsPath)
+	}
+
+	conn, err := d.connector()
+	if err != nil {
+		return "", nil, err
 	}
 
 	// The Linux NVMe driver uses the namespace NGUID as the eui identifier in
@@ -126,7 +231,20 @@ func (d *netapp) getMappedDevPath(volName string) (string, error) {
 		return strings.HasSuffix(devPath, suffix)
 	}
 
-	return conn.GetDiskDevicePath(filter)
+	var devicePath string
+	if doMapVolume {
+		devicePath, err = conn.WaitDiskDevicePath(d.state.ShutdownCtx, filter)
+	} else {
+		devicePath, err = conn.GetDiskDevicePath(filter)
+	}
+
+	if err != nil {
+		return "", nil, fmt.Errorf("Failed locating device for volume %q: %w", vol.name, err)
+	}
+
+	cleanup := reverter.Clone().Fail
+	reverter.Success()
+	return devicePath, cleanup, nil
 }
 
 // DeleteVolume deletes an existing volume.
@@ -485,113 +603,12 @@ func (d *netapp) RestoreVolume(vol Volume, snapVol Volume, progressReporter iopr
 // MountVolume maps the namespace to the host's NVMe subsystem, opens the TCP
 // session if needed, and waits for the resulting block device to appear.
 func (d *netapp) MountVolume(vol Volume, progressReporter ioprogress.ProgressReporter) error {
-	revert := revert.New()
-	defer revert.Fail()
-
-	svmName := d.client().svmName
-	volName := d.client().getVolumeName(vol)
-	nsPath := fmt.Sprintf("/vol/%s/ns0", volName)
-
-	ns, err := d.client().getNamespace(d.state.ShutdownCtx, nsPath, svmName)
-	if err != nil {
-		return fmt.Errorf("Failed retrieving namespace for mount: %w", err)
-	}
-
-	subsys, err := d.ensureHost()
-	if err != nil {
-		return fmt.Errorf("Failed ensuring host subsystem: %w", err)
-	}
-
-	err = d.client().mapNamespace(d.state.ShutdownCtx, ns.UUID, subsys.UUID)
-	if err != nil {
-		return fmt.Errorf("Failed mapping namespace to subsystem: %w", err)
-	}
-
-	revert.Add(func() { _ = d.client().unmapNamespace(d.state.ShutdownCtx, ns.UUID, subsys.UUID) })
-
-	// Connect NVMe Subsystem
-	targets := []string{}
-	// Fallback to configured targets instead if defined.
-	if targetConf := d.config["netapp.target"]; targetConf != "" {
-		targets = append(targets, targetConf)
-	} else {
-		targets, err = d.client().getNVMeTargetPortals(d.state.ShutdownCtx, svmName)
-		if err != nil {
-			return fmt.Errorf("Failed obtaining NVMe target portals: %w", err)
-		}
-	}
-
-	conn, err := d.connector()
-	if err != nil {
-		return err
-	}
-
-	disconnect, err := conn.Connect(d.state.ShutdownCtx, subsys.TargetNQN, targets...)
-	if err != nil {
-		return fmt.Errorf("Failed to connect to NVMe subsystem: %w", err)
-	}
-
-	revert.Add(disconnect)
-
-	// Wait for the kernel to expose the namespace as a /dev/disk/by-id entry
-	// keyed by the namespace's NGUID. Without this wait, immediately consuming
-	// the device (mkfs, MountTask) races the udev settle.
-	if ns.NGUID == "" {
-		return fmt.Errorf("Namespace %q has no NGUID", nsPath)
-	}
-
-	suffix := strings.ToLower(ns.NGUID)
-	filter := func(devPath string) bool {
-		return strings.HasSuffix(devPath, suffix)
-	}
-
-	_, err = conn.WaitDiskDevicePath(d.state.ShutdownCtx, filter)
-	if err != nil {
-		return fmt.Errorf("Failed waiting for NVMe device: %w", err)
-	}
-
-	revert.Success()
-	return nil
+	return mountVolume(d, vol, d.getMappedDevPath, progressReporter)
 }
 
 // UnmountVolume unmounts the volume.
 func (d *netapp) UnmountVolume(vol Volume, keepBlockDev bool, progressReporter ioprogress.ProgressReporter) (bool, error) {
-	volName := d.client().getVolumeName(vol)
-	svmName := d.client().svmName
-	nsPath := fmt.Sprintf("/vol/%s/ns0", volName)
-
-	// Assume we unmounted filesystem using common unmount routines...
-	// Then we disconnect block storage mappings:
-
-	ns, err := d.client().getNamespace(d.state.ShutdownCtx, nsPath, svmName)
-	if err != nil {
-		// Log missing namespaces as non-fatal but exit to prevent dangling
-		return false, nil
-	}
-
-	subsysName := d.getSubsystemName()
-	subsys, err := d.client().getSubsystem(d.state.ShutdownCtx, subsysName, svmName)
-	if err != nil {
-		return false, nil
-	}
-
-	err = d.client().unmapNamespace(d.state.ShutdownCtx, ns.UUID, subsys.UUID)
-	if err != nil {
-		return false, fmt.Errorf("Failed to unmap NVMe volume: %w", err)
-	}
-
-	// Disconnect NVMe target sessions.
-	conn, err := d.connector()
-	if err != nil {
-		return false, err
-	}
-
-	err = conn.Disconnect(subsys.TargetNQN)
-	if err != nil {
-		return false, fmt.Errorf("Failed to disconnect NVMe session: %w", err)
-	}
-
-	return true, nil
+	return unmountVolume(d, vol, keepBlockDev, d.getMappedDevPath, d.unmapVolume, progressReporter)
 }
 
 // SetVolumeQuota sets the quota on the volume.
@@ -648,8 +665,8 @@ func (d *netapp) SetVolumeQuota(vol Volume, size string, allowUnsafeResize bool,
 
 	// Wait for the local NVMe block device to reflect the new size. This is
 	// best-effort: the volume may not currently be mapped to this host.
-	devicePath, err := d.getMappedDevPath(volName)
-	if err == nil && devicePath != "" {
+	devicePath, _, _ := d.getMappedDevPath(vol, false)
+	if devicePath != "" {
 		conn, err := d.connector()
 		if err != nil {
 			return err

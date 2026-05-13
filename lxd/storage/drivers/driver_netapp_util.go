@@ -41,13 +41,6 @@ type netappAggregate struct {
 			Available int64 `json:"available"`
 		} `json:"block_storage"`
 	} `json:"space"`
-	// SVM is populated only when the request includes svm in the fields list,
-	// e.g. via aggregates?fields=...,svm. ONTAP exposes the owning SVM on the
-	// aggregate record so callers can avoid an extra round-trip.
-	SVM struct {
-		Name string `json:"name"`
-		UUID string `json:"uuid"`
-	} `json:"svm"`
 }
 
 type netappAggregateResponse struct {
@@ -176,7 +169,7 @@ func (c *netappClient) waitForJob(ctx context.Context, jobUUID string) error {
 // getAggregate retrieves information about the specified aggregate.
 func (c *netappClient) getAggregate(ctx context.Context, name string) (*netappAggregate, error) {
 	var resp netappAggregateResponse
-	path := fmt.Sprintf("/storage/aggregates?name=%s&fields=uuid,space,home_node,snapmirror_label,svm", name)
+	path := fmt.Sprintf("/storage/aggregates?name=%s&fields=uuid,space", name)
 
 	err := c.do(ctx, http.MethodGet, path, nil, &resp)
 	if err != nil {

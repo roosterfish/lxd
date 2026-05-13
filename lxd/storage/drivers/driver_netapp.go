@@ -75,14 +75,8 @@ func (d *netapp) client() *netappClient {
 			Proxy:           http.ProxyFromEnvironment,
 		}
 
-		// The SVM is discovered from the aggregate at pool-create time and
-		// persisted in volatile config; a stale config["netapp.svm"] entry
-		// (legacy or test override) takes precedence so users can pin a
-		// specific SVM if the aggregate later moves.
+		// The SVM is provided by the user at pool creation time.
 		svmName := d.config["netapp.svm"]
-		if svmName == "" {
-			svmName = d.config["volatile.svm.name"]
-		}
 
 		d.httpClient = &netappClient{
 			gateway:    d.config["netapp.gateway"],
@@ -191,6 +185,13 @@ func (d *netapp) Validate(config map[string]string) error {
 		//  shortdesc: Aggregate Name for the pool
 		//  scope: global
 		"netapp.aggregate": validate.IsAny,
+		// lxdmeta:generate(entities=storage-ontap; group=pool-conf; key=netapp.svm)
+		//
+		// ---
+		//  type: string
+		//  shortdesc: Storage VM Name for the pool
+		//  scope: global
+		"netapp.svm": validate.IsAny,
 		// lxdmeta:generate(entities=storage-ontap; group=pool-conf; key=netapp.mode)
 		//
 		// ---
@@ -268,6 +269,10 @@ func (d *netapp) ValidateSource() error {
 		return errors.New("The netapp.aggregate cannot be empty")
 	}
 
+	if d.config["netapp.svm"] == "" {
+		return errors.New("The netapp.svm cannot be empty")
+	}
+
 	return nil
 }
 
@@ -278,19 +283,18 @@ func (d *netapp) Create() error {
 		return errors.New("Aggregate name is required for pool creation")
 	}
 
+	if d.config["netapp.svm"] == "" {
+		return errors.New("SVM name is required for pool creation")
+	}
+
 	// Validate the aggregate exists and has capacity.
-	aggr, err := d.client().getAggregate(context.TODO(), d.config["netapp.aggregate"])
+	_, err := d.client().getAggregate(context.TODO(), d.config["netapp.aggregate"])
 	if err != nil {
 		return fmt.Errorf("Failed verifying target aggregate: %w", err)
 	}
 
-	// Record the discovered SVM in volatile so subsequent driver loads don't
-	// need to re-query the aggregate just to learn the owning Vserver.
-	d.config["volatile.svm.name"] = aggr.SVM.Name
-	d.config["volatile.svm.uuid"] = aggr.SVM.UUID
-	d.client().svmName = aggr.SVM.Name
-
-	err = d.client().getNVMeService(context.TODO(), aggr.SVM.Name)
+	// Validate the SVM exists and has NVMe service enabled.
+	err = d.client().getNVMeService(context.TODO(), d.config["netapp.svm"])
 	if err != nil {
 		return fmt.Errorf("Failed verifying NVMe service: %w", err)
 	}
