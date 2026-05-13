@@ -233,7 +233,7 @@ Connectors in `lxd/storage/connectors/` abstract host-side transport operations.
 Supported connector types:
 
 - `iscsi`
-- `nvme`
+- `nvme` (NVMe/TCP)
 - `sdc`
 
 Important properties:
@@ -242,15 +242,54 @@ Important properties:
 - Uses `iscsiadm`.
 - Maintains/discovers sessions from sysfs.
 
-2. NVMe connector:
-- Uses `nvme` CLI.
-- Handles discovery log parsing and subsystem/session mapping.
+2. NVMe/TCP connector (`TypeNVME = "nvme"` in `connector.go`):
+- Uses `nvme` CLI (nvme-cli package).
+- Kernel modules required: `nvme_fabrics`, `nvme_tcp` (loaded via `LoadModules()`).
+- Default discovery port: `8009` (`NVMeDefaultDiscoveryPort`).
+- Default I/O transport port: `4420` (`NVMeDefaultTransportPort`).
+- Transport type is always `tcp` (`nvmeTransportTypeTCP`).
+- Connect path: `nvme connect --transport tcp --traddr <addr> --trsvcid <port> --nqn <targetNQN> --hostnqn <hostNQN> --hostid <serverUUID>`.
+- Disconnect path: `nvme disconnect --nqn <targetNQN>`.
+- Session discovery: parsed from `/sys/class/nvme-subsystem` (subsystem NQN) and `/sys/class/nvme` (active controllers).
+- Disk device identification: uses `nvme-eui.<EUI>` prefix under `/dev/disk/by-id/`.
+- Discovery log: parsed from `nvme discover --output-format json`. Records are filtered to `nvme subsystem` subtype and TCP transport type, then normalized so missing transport service identifiers default to `NVMeDefaultTransportPort`.
+- Host NQN format: `nqn.2014-08.org.nvmexpress:uuid:<serverUUID>`.
+- Session tracking handles temporarily inactive subsystems to allow automatic reconnection after transient network failures.
 
 3. SDC connector (PowerFlex-specific):
 - No connect/disconnect action in LXD (handled by Dell SDC stack).
 - Primarily validates module presence and device path behavior.
 
 Spec implication: remote-driver logic must be validated together with connector mode constraints, not in isolation.
+
+## 7a. NVMe/TCP Focus for Upcoming Storage Drivers
+
+The NVMe/TCP connector is the **preferred transport** for new remote storage drivers. When designing or validating a new driver that uses NVMe/TCP, the following points apply:
+
+1. **Mode declaration**: Set `nvme` as the supported or default connector mode. Expose it via `<driverName>SupportedConnectors` and validate it in `Validate()`.
+
+2. **Kernel module dependency**: `LoadModules()` on the NVMe connector handles loading `nvme_fabrics` and `nvme_tcp`. The driver must call this before any connect attempt.
+
+3. **Host NQN**: Derived from the LXD server UUID via `QualifiedName()`. The driver must pass the server UUID when constructing the connector via `connectors.NewConnector(TypeNVME, serverUUID)`.
+
+4. **Discovery vs. direct connect**:
+   - If the backend provides discovery endpoints: use `nvme discover` to retrieve the log, filter by `nvme subsystem` subtype and `tcp` transport, then connect to each advertised address.
+   - If the backend provides explicit target addresses and NQNs: call `connector.Connect(ctx, targetNQN, addresses...)` directly.
+
+5. **Subsystem NQN**: The backend must expose a stable NQN per volume or per host group. The driver must store or derive this NQN and pass it consistently to `Connect` and `Disconnect`.
+
+6. **Disk device path**: After connect, resolve the device via `nvme-eui.<EUI>` under `/dev/disk/by-id/`. Use the block package helpers to wait for device availability before returning the path to the caller.
+
+7. **Session lifecycle**:
+   - Map/attach: ensure igroup or host object, call `connector.Connect()`, resolve device path.
+   - Unmap/detach: remove the block device reference, call `connector.Disconnect()`, clean up host object if no other volumes remain.
+   - Use `d.state.ShutdownCtx` for all long-running connector operations.
+
+8. **Ports**: Use `NVMeDefaultTransportPort` (`4420`) for data and `NVMeDefaultDiscoveryPort` (`8009`) for discovery unless the backend specifies otherwise.
+
+9. **Error handling**: A connect failure after partial igroup/host setup must trigger a full revert. Do not leave orphaned host objects on the array.
+
+10. **Testing**: Validate connector behavior with `test/storage-vm` and `test/storage-volumes-vm` in LXD-CI. Confirm `nvme list` and `/sys/class/nvme-subsystem` entries appear and disappear correctly across mount/unmount cycles.
 
 ## 8. Validation Matrix for Third-Party Remote Drivers
 
@@ -300,9 +339,10 @@ Common points:
 Differences that matter for spec validation:
 
 1. Transport mode model differs:
-- Alletra and Pure: NVMe/iSCSI.
-- PowerFlex: NVMe/SDC.
-- PowerStore: iSCSI only.
+- Alletra and Pure: NVMe/TCP or iSCSI.
+- PowerFlex: NVMe/TCP or SDC.
+- PowerStore: iSCSI only (current implementation).
+- **Upcoming drivers**: NVMe/TCP is the preferred transport; see section 7a for implementation requirements.
 
 2. Pool creation ownership differs:
 - Alletra/Pure create a remote pool construct.
@@ -349,7 +389,7 @@ Use these files as the primary code anchors:
 - `lxd/storage/drivers/driver_powerstore_volumes.go`
 - `lxd/storage/connectors/connector.go`
 - `lxd/storage/connectors/connector_iscsi.go`
-- `lxd/storage/connectors/connector_nvme.go`
+- `lxd/storage/connectors/connector_nvme.go` (NVMe/TCP — primary transport for new drivers)
 - `lxd/storage/connectors/connector_sdc.go`
 - `lxd/storage/drivers/clients/alletra_wsapi1.go`
 - `lxd/storage/drivers/clients/powerstore.go`

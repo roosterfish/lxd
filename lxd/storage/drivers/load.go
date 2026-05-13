@@ -16,6 +16,7 @@ var drivers = map[string]func() driver{
 	"powerstore": func() driver { return &powerstore{} },
 	"pure":       func() driver { return &pure{} },
 	"alletra":    func() driver { return &alletra{} },
+	"netapp":     func() driver { return &netapp{} },
 	"zfs":        func() driver { return &zfs{} },
 }
 

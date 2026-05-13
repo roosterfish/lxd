@@ -1,6 +1,6 @@
 name: coding_convention
-description: "Use when implementing or modifying LXD storage drivers, remote storage volume mapping, and storage backend-driver integration in lxd/storage/drivers and related storage backend files. Enforces naming, implementation flow, validation, revert safety, snapshot/copy, and VM companion-volume patterns."
-applyTo:
+description: "Use when implementing or modifying LXD storage drivers, remote storage volume mapping, and storage backend-driver integration in lxd/storage/drivers and related storage backend files. Enforces naming, implementation flow, validation, revert safety, snapshot/copy, and support for different instance/custom volume (block, filesystem volumes) patterns."
+applyTo: 
   - "lxd/storage/drivers/driver_*.go"
   - "lxd/storage/drivers/load.go"
   - "lxd/storage/drivers/interface.go"
@@ -34,6 +34,7 @@ applyTo:
   - `ensureHost()`, `mapVolume()`, `unmapVolume()`, `getMappedDevPath()` or `getMappedDevicePath()` for host mapping flows.
   - Public interface methods should delegate to lower-case helpers where appropriate (for example `CreateVolumeSnapshot()` and `createVolumeSnapshot()`).
 - Keep config keys lowercase and driver-prefixed for pool options (for example `powerstore.gateway`, `pure.mode`) and use shared keys for volume options (`volume.size`, `block.filesystem`, `block.mount_options`).
+- If the backend has a volume name length limitation, always use the volume UUID (or a UUID-derived string) as the storage volume name. See `UUIDVolumeNames: true` in drivers like PowerFlex, PowerStore, and Pure. Remove hyphens from the UUID if needed to fit length constraints. Document the naming logic in the driver and ensure decode/parse helpers are robust.
 
 ## Comments And Errors
 
@@ -72,12 +73,18 @@ applyTo:
   - Force VM filesystem defaults where needed.
 - In `ValidateVolume()`, remove `block.*` rules for custom block volumes and normalize ISO size according to driver constraints.
 
-## Snapshot, Copy, And Refresh
+
+## Snapshot, Copy, Refresh, And Optimized Image Storage
 
 - Implement snapshot copy/refresh behavior explicitly when backend APIs do not support atomic copy-with-snapshots.
 - Match snapshots by short snapshot name and update parent UUID relations correctly.
 - Use private helper orchestration (`refreshVolume`, `createVolumeSnapshot`) to avoid duplicated logic across public methods.
 - For snapshot mount paths that require temporary clones, isolate clone naming and cleanup logic clearly.
+- If the backend supports optimized image storage (e.g., native volume cloning, deduplication, or zero-copy image instantiation), implement the logic in the driver:
+  - Detect optimized image support in `Info()` and expose via the `OptimizedImages` field.
+  - Implement `CreateVolumeFromImage()` and/or `CreateInstanceFromImage()` to use backend-native clone/copy paths for images.
+  - Ensure fallback to generic copy if optimized path is unavailable or fails.
+  - Document any backend-specific requirements or limitations for optimized image storage in the driver doc page.
 
 ## Mounting And Device Mapping
 
